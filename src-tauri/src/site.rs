@@ -6,12 +6,15 @@ use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 
 pub const ORIGIN: &str = "https://animejoya.ru";
+pub const SIBNET: &str = "https://video.sibnet.ru";
 pub const UA: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Source {
     pub quality: String,
     pub url: String,
+    /// Чужому CDN нужен свой Referer, иначе 403. Пустая строка — сойдёт ORIGIN.
+    pub referer: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -19,12 +22,62 @@ pub struct Episode {
     pub player_id: String,
     pub title: String,
     pub sources: Vec<Source>,
+    /// Сырой data-file — по нему дорезолвим ссылки внешнего плеера.
+    pub embed: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    /// Свой playerjs: ссылки лежат прямо в data-file.
+    Direct,
+    AllVideo,
+    Sibnet,
+    /// Чужой iframe, который мы не разбираем.
+    External,
+}
+
+pub fn kind(data_file: &str) -> Kind {
+    if data_file.contains("playerjs.html") {
+        Kind::Direct
+    } else if data_file.contains("fsst.online") {
+        Kind::AllVideo
+    } else if data_file.contains("sibnet.ru") {
+        Kind::Sibnet
+    } else {
+        Kind::External
+    }
+}
+
+/// `Some(true)` — ссылки достаются отдельным запросом, `None` — не умеем вовсе.
+fn usable(ep: &Episode) -> Option<bool> {
+    match kind(&ep.embed) {
+        Kind::Direct => (!ep.sources.is_empty()).then_some(false),
+        Kind::AllVideo | Kind::Sibnet => Some(true),
+        Kind::External => None,
+    }
+}
+
+fn absolute(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("//") {
+        format!("https://{rest}")
+    } else {
+        url.to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Player {
     pub id: String,
     pub name: String,
+}
+
+/// Лист дерева плееров: конкретная озвучка + плеер (+ диапазон серий).
+#[derive(Debug, Clone, Serialize)]
+pub struct Choice {
+    pub id: String,
+    /// Метки по уровням — их число зависит от тайтла.
+    pub path: Vec<String>,
+    pub resolvable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,17 +104,18 @@ pub struct Playlist {
 }
 
 impl Playlist {
-    /// data-id иерархичен: `0_0` — плеер, `0_1_0` — озвучка `0_1` + плеер `_0`.
-    pub fn player_name(&self, id: &str) -> String {
+    /// data-id иерархичен: `0_0` — озвучка, `0_0_1` — плеер внутри неё,
+    /// а у долгих тайтлов есть ещё `0_0_1_3` — диапазон серий.
+    pub fn player_path(&self, id: &str) -> Vec<String> {
         let parts: Vec<&str> = id.split('_').collect();
         let chain: Vec<String> = (1..=parts.len())
             .map(|n| parts[..n].join("_"))
             .filter_map(|prefix| self.label(&prefix))
             .collect();
         if chain.is_empty() {
-            id.to_string()
+            vec![id.to_string()]
         } else {
-            chain.join(" · ")
+            chain
         }
     }
 
@@ -72,32 +126,39 @@ impl Playlist {
             .map(|p| p.name.clone())
     }
 
-    /// Плееры, отдающие прямые ссылки на видео (а не чужой iframe).
-    pub fn direct_players(&self) -> Vec<Player> {
-        let mut ids: Vec<String> = Vec::new();
+    /// Плееры, из которых достаём прямые ссылки. Флаг — нужен ли для этого
+    /// отдельный запрос к чужому сайту (AllVideo, Sibnet).
+    pub fn playable(&self) -> Vec<Choice> {
+        let mut out: Vec<Choice> = Vec::new();
         for ep in &self.episodes {
-            if !ep.sources.is_empty() && !ids.contains(&ep.player_id) {
-                ids.push(ep.player_id.clone());
+            let Some(resolvable) = usable(ep) else {
+                continue;
+            };
+            if out.iter().any(|c| c.id == ep.player_id) {
+                continue;
             }
+            out.push(Choice {
+                path: self.player_path(&ep.player_id),
+                id: ep.player_id.clone(),
+                resolvable,
+            });
         }
-        ids.into_iter()
-            .map(|id| Player {
-                name: self.player_name(&id),
-                id,
-            })
-            .collect()
+        out
     }
 
     pub fn external_names(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for ep in &self.episodes {
-            if ep.sources.is_empty() {
-                let leaf = self
-                    .label(&ep.player_id)
-                    .unwrap_or_else(|| ep.player_id.clone());
-                if !out.contains(&leaf) {
-                    out.push(leaf);
-                }
+            if usable(ep).is_some() {
+                continue;
+            }
+            // Название плеера — второй уровень: [озвучка, плеер, диапазон серий].
+            let path = self.player_path(&ep.player_id);
+            let Some(name) = path.get(1).or_else(|| path.last()) else {
+                continue;
+            };
+            if !out.contains(name) {
+                out.push(name.clone());
             }
         }
         out
@@ -184,6 +245,65 @@ impl Site {
         Ok(())
     }
 
+    /// Страница чужого плеера — берём её так, как её брал бы iframe на сайте.
+    async fn embed_page(&self, url: &str) -> Result<String> {
+        let r = self
+            .http
+            .get(url)
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            .header("Referer", format!("{ORIGIN}/"))
+            .header("Sec-Fetch-Dest", "iframe")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "cross-site")
+            .send()
+            .await
+            .with_context(|| format!("не удалось открыть плеер {url}"))?;
+        Ok(r.text().await?)
+    }
+
+    /// Прямые ссылки для одной серии внешнего плеера.
+    pub async fn resolve(&self, embed: &str) -> Result<Vec<Source>> {
+        let url = absolute(embed);
+        match kind(embed) {
+            Kind::Direct => Ok(parse_sources(embed)),
+            Kind::AllVideo => self.allvideo(&url).await,
+            Kind::Sibnet => self.sibnet(&url).await,
+            Kind::External => bail!("плеер {url} не поддерживается"),
+        }
+    }
+
+    /// fsst.online редиректит на зеркало и отдаёт открытый конфиг PlayerJS —
+    /// формат `[качество]ссылка` там ровно тот же, что и у своего плеера сайта.
+    async fn allvideo(&self, url: &str) -> Result<Vec<Source>> {
+        let html = self.embed_page(url).await?;
+        let out = playerjs_file(&html)
+            .map(|list| parse_quality_list(&list))
+            .unwrap_or_default();
+        if out.is_empty() {
+            bail!("AllVideo не отдал ссылок на видео");
+        }
+        Ok(out)
+    }
+
+    /// Sibnet прячет видео за редиректом, который без своего Referer даёт 403.
+    /// Ссылку `/v/..` не разворачиваем: она вечная, а вот CDN за ней — на пару часов.
+    async fn sibnet(&self, url: &str) -> Result<Vec<Source>> {
+        let html = self.embed_page(url).await?;
+        let path = sibnet_path(&html).ok_or_else(|| anyhow!("Sibnet не отдал ссылки на видео"))?;
+        Ok(vec![Source {
+            quality: "sibnet".into(),
+            url: if path.starts_with("http") {
+                path
+            } else {
+                format!("{SIBNET}{path}")
+            },
+            referer: format!("{SIBNET}/"),
+        }])
+    }
+
     /// Плейлист приходит отдельным ajax-запросом, в HTML страницы его нет.
     pub async fn playlist(&self, news_id: &str, referer: &str) -> Result<Playlist> {
         let url = format!("{ORIGIN}/engine/ajax/playlists.php?news_id={news_id}&xfield=playlist");
@@ -236,6 +356,7 @@ fn parse_playlist(html: &str) -> Playlist {
                 player_id: el.value().attr("data-id").unwrap_or("?").to_string(),
                 title: text_of(&el),
                 sources: parse_sources(file),
+                embed: file.to_string(),
             })
         })
         .collect();
@@ -261,7 +382,11 @@ fn parse_sources(data_file: &str) -> Vec<Source> {
     };
     let raw = &data_file[idx + "file=".len()..];
     let list = percent_decode_str(raw).decode_utf8_lossy().to_string();
+    parse_quality_list(&list)
+}
 
+/// `[1080p]https://a.mp4,[720p]https://b.mp4` — общий формат PlayerJS.
+fn parse_quality_list(list: &str) -> Vec<Source> {
     // Границы записей — `[` в начале строки или сразу после запятой.
     let marks: Vec<usize> = list
         .match_indices('[')
@@ -275,6 +400,7 @@ fn parse_sources(data_file: &str) -> Vec<Source> {
             vec![Source {
                 quality: "video".into(),
                 url,
+                referer: String::new(),
             }]
         } else {
             Vec::new()
@@ -293,10 +419,42 @@ fn parse_sources(data_file: &str) -> Vec<Source> {
             out.push(Source {
                 quality: entry[1..close].to_string(),
                 url,
+                referer: String::new(),
             });
         }
     }
     out
+}
+
+/// Значение JS-строки следом за `key`: `file:"..."`, `src: '...'`.
+/// Возвращает ещё и позицию за ней, чтобы можно было искать дальше.
+fn js_string_after(hay: &str, key: &str, from: usize) -> Option<(String, usize)> {
+    let at = hay[from..].find(key)? + from + key.len();
+    let rest = &hay[at..];
+    let open = rest.find(['"', '\''])?;
+    let quote = rest[open..].chars().next()?;
+    let start = open + quote.len_utf8();
+    let end = rest[start..].find(quote)? + start;
+    Some((rest[start..end].to_string(), at + end))
+}
+
+/// Первый `file:` в конфиге PlayerJS, похожий на список ссылок.
+fn playerjs_file(html: &str) -> Option<String> {
+    let mut at = 0;
+    while let Some((value, next)) = js_string_after(html, "file:", at) {
+        if value.starts_with('[') || value.starts_with("http") {
+            return Some(value);
+        }
+        at = next;
+    }
+    None
+}
+
+/// `player.src([{src: "/v/<hash>/<id>.mp4", type: "video/mp4"},]);`
+fn sibnet_path(html: &str) -> Option<String> {
+    let at = html.find("player.src(")?;
+    let (value, _) = js_string_after(html, "src", at)?;
+    (value.contains(".mp4") || value.contains(".m3u8")).then_some(value)
 }
 
 /// news_id нужен для ajax-запроса плейлиста.

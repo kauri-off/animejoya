@@ -3,10 +3,12 @@ mod player;
 mod site;
 mod store;
 
+use anyhow::Context;
+use futures_util::StreamExt;
 use serde::Serialize;
-use site::{Player, Site, Source};
+use site::{Site, Source};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use store::{Entry, Settings};
@@ -25,6 +27,8 @@ pub struct App {
     library: Mutex<Vec<Entry>>,
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
     media: reqwest::Client,
+    /// Плейлист открытого тайтла: из него берём embed-ссылки для ленивого резолва.
+    playlists: Mutex<HashMap<String, site::Playlist>>,
 }
 
 #[derive(Serialize)]
@@ -41,8 +45,11 @@ struct EpisodeView {
 #[serde(rename_all = "camelCase")]
 struct PlayerView {
     id: String,
-    name: String,
+    /// Метки по уровням: озвучка, плеер, диапазон серий — сколько их, решает тайтл.
+    path: Vec<String>,
     episodes: Vec<EpisodeView>,
+    /// Ссылки лежат на чужом сайте — подтянем их, когда выберут эту озвучку.
+    resolvable: bool,
 }
 
 #[derive(Serialize)]
@@ -121,6 +128,70 @@ impl App {
         };
         store::save_library(&lib)?;
         Ok(entry)
+    }
+}
+
+impl App {
+    /// Догружает ссылки AllVideo/Sibnet: там на каждую серию своя страница
+    /// плеера, поэтому дёргаем это только когда озвучку действительно выбрали.
+    async fn resolve_player(&self, url: &str, player_id: &str) -> anyhow::Result<Vec<EpisodeView>> {
+        let episodes: Vec<site::Episode> = {
+            let cache = self.playlists.lock().await;
+            let playlist = cache.get(url).context("тайтл не открыт")?;
+            playlist
+                .episodes_of(player_id)
+                .into_iter()
+                .cloned()
+                .collect()
+        };
+        if episodes.is_empty() {
+            anyhow::bail!("у этой озвучки нет серий");
+        }
+
+        let cfg = store::load_settings()?;
+        let dir = store::video_dir(&cfg).join(store::slug(url));
+
+        let mut embeds: Vec<String> = Vec::new();
+        for e in &episodes {
+            embeds.push(e.embed.clone());
+        }
+
+        // Не больше четырёх запросов разом, чтобы не ловить лимиты чужого сайта.
+        let site = &self.site;
+        let resolved: Vec<_> = futures_util::stream::iter(embeds)
+            .map(|embed| async move { site.resolve(&embed).await })
+            .buffered(4)
+            .collect()
+            .await;
+
+        let mut out = Vec::new();
+        let mut last = None;
+        for (e, res) in episodes.iter().zip(resolved) {
+            let mut e = e.clone();
+            match res {
+                Ok(sources) => e.sources = sources,
+                Err(e) => last = Some(e),
+            }
+            out.push(episode_view(&e, &dir));
+        }
+        if out.iter().all(|e| e.sources.is_empty()) {
+            return Err(last.unwrap_or_else(|| anyhow::anyhow!("плеер не отдал ссылок")));
+        }
+        Ok(out)
+    }
+}
+
+fn episode_view(e: &site::Episode, dir: &Path) -> EpisodeView {
+    let tag = store::ep_tag(&e.title);
+    let file = e.sources.iter().find_map(|s| {
+        let path = dir.join(format!("{tag}-{}.mp4", s.quality));
+        path.exists().then(|| path.to_string_lossy().to_string())
+    });
+    EpisodeView {
+        title: e.title.clone(),
+        tag,
+        sources: e.sources.clone(),
+        file,
     }
 }
 
@@ -214,40 +285,41 @@ async fn title_open(app: State<'_, App>, url: String) -> Res<TitleView> {
     let cfg = store::load_settings().map_err(err)?;
     let dir = store::video_dir(&cfg).join(store::slug(&url));
 
-    let players = playlist
-        .direct_players()
+    let players: Vec<PlayerView> = playlist
+        .playable()
         .into_iter()
-        .map(|p: Player| PlayerView {
+        .map(|c| PlayerView {
             episodes: playlist
-                .episodes_of(&p.id)
+                .episodes_of(&c.id)
                 .into_iter()
-                .map(|e| {
-                    let tag = store::ep_tag(&e.title);
-                    let file = e.sources.iter().find_map(|s| {
-                        let path = dir.join(format!("{tag}-{}.mp4", s.quality));
-                        path.exists().then(|| path.to_string_lossy().to_string())
-                    });
-                    EpisodeView {
-                        title: e.title.clone(),
-                        tag,
-                        sources: e.sources.clone(),
-                        file,
-                    }
-                })
+                .map(|e| episode_view(e, &dir))
                 .collect(),
-            id: p.id,
-            name: p.name,
+            id: c.id,
+            path: c.path,
+            resolvable: c.resolvable,
         })
         .collect();
+    let external = playlist.external_names();
 
+    app.playlists.lock().await.insert(url.clone(), playlist);
     let entry = app.upsert(&url, meta).await.map_err(err)?;
 
     Ok(TitleView {
         entry,
         players,
-        external: playlist.external_names(),
+        external,
         dir: dir.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command]
+async fn player_resolve(
+    app: State<'_, App>,
+    url: String,
+    player_id: String,
+) -> Res<Vec<EpisodeView>> {
+    let url = store::normalize_url(&url);
+    app.resolve_player(&url, &player_id).await.map_err(err)
 }
 
 /// Запоминает последнюю озвучку/качество, чтобы не спрашивать их каждый раз.
@@ -292,9 +364,14 @@ async fn mark_watched(
 
 /// Смотреть сразу с CDN, без сохранения файла.
 #[tauri::command]
-async fn stream(url: String, title: String) -> Res<String> {
+async fn stream(url: String, title: String, referer: String) -> Res<String> {
     let cfg = store::load_settings().map_err(err)?;
-    player::launch(cfg.player.as_deref(), &url, &title)
+    let referer = if referer.is_empty() {
+        site::ORIGIN
+    } else {
+        &referer
+    };
+    player::launch(cfg.player.as_deref(), &url, &title, Some(referer))
         .await
         .map_err(err)
 }
@@ -302,7 +379,7 @@ async fn stream(url: String, title: String) -> Res<String> {
 #[tauri::command]
 async fn play_file(path: String, title: String) -> Res<String> {
     let cfg = store::load_settings().map_err(err)?;
-    player::launch(cfg.player.as_deref(), &path, &title)
+    player::launch(cfg.player.as_deref(), &path, &title, None)
         .await
         .map_err(err)
 }
@@ -316,6 +393,7 @@ async fn download_start(
     episode: String,
     quality: String,
     source_url: String,
+    referer: String,
     autoplay: bool,
 ) -> Res<String> {
     let cfg = store::load_settings().map_err(err)?;
@@ -331,6 +409,11 @@ async fn download_start(
         cancels.insert(id.clone(), flag.clone());
     }
 
+    let referer = if referer.is_empty() {
+        site::ORIGIN.to_string()
+    } else {
+        referer
+    };
     let media = app.media.clone();
     let task_id = id.clone();
     let player_cfg = cfg.player.clone();
@@ -341,6 +424,7 @@ async fn download_start(
         let res = download::fetch(
             &media,
             &source_url,
+            &referer,
             &dest,
             &cancel,
             move |done, total, bps| {
@@ -372,7 +456,9 @@ async fn download_start(
                     },
                 );
                 if autoplay {
-                    if let Err(e) = player::launch(player_cfg.as_deref(), &path, &episode).await {
+                    if let Err(e) =
+                        player::launch(player_cfg.as_deref(), &path, &episode, None).await
+                    {
                         let _ = handle.emit("player:error", err(e));
                     }
                 }
@@ -421,6 +507,7 @@ pub fn run() {
                 library: Mutex::new(store::load_library()?),
                 cancels: Mutex::new(HashMap::new()),
                 media: site::media_client()?,
+                playlists: Mutex::new(HashMap::new()),
             });
             Ok(())
         })
@@ -432,6 +519,7 @@ pub fn run() {
             library_sync,
             library_remove,
             title_open,
+            player_resolve,
             remember_choice,
             mark_watched,
             stream,

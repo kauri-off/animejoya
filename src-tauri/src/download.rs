@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_LENGTH, RANGE};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use reqwest::Client;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,7 @@ impl Cancel {
 pub async fn fetch<F>(
     http: &Client,
     url: &str,
+    referer: &str,
     dest: &Path,
     cancel: &Cancel,
     mut on_progress: F,
@@ -41,7 +42,7 @@ where
         fs::create_dir_all(dir).await?;
     }
 
-    let total = remote_size(http, url).await;
+    let total = remote_size(http, url, referer).await;
 
     if let Ok(m) = fs::metadata(dest).await {
         if total.is_none() || Some(m.len()) == total {
@@ -67,7 +68,7 @@ where
     let mut req = http
         .get(url)
         .header("Accept", "video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5")
-        .header("Referer", crate::site::ORIGIN)
+        .header("Referer", referer)
         .header("Sec-Fetch-Dest", "video")
         .header("Sec-Fetch-Mode", "no-cors")
         .header("Sec-Fetch-Site", "cross-site");
@@ -144,15 +145,27 @@ fn num(v: &reqwest::header::HeaderValue) -> Option<u64> {
     v.to_str().ok()?.parse().ok()
 }
 
-async fn remote_size(http: &Client, url: &str) -> Option<u64> {
+/// HEAD на sibnet и filevideo отдаёт 403, поэтому размер спрашиваем диапазоном.
+async fn remote_size(http: &Client, url: &str, referer: &str) -> Option<u64> {
     let r = http
-        .head(url)
-        .header("Referer", crate::site::ORIGIN)
+        .get(url)
+        .header("Referer", referer)
+        .header(RANGE, "bytes=0-0")
         .send()
         .await
         .ok()?;
     if !r.status().is_success() {
         return None;
     }
-    r.headers().get(CONTENT_LENGTH).and_then(num)
+    // `bytes 0-0/12345` при 206; если диапазон проигнорировали — это весь файл.
+    r.headers()
+        .get(CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit('/').next())
+        .and_then(|v| v.parse().ok())
+        .or_else(|| {
+            (r.status().as_u16() == 200)
+                .then(|| r.headers().get(CONTENT_LENGTH).and_then(num))
+                .flatten()
+        })
 }

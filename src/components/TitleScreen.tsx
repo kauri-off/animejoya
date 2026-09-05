@@ -5,12 +5,17 @@ import { Check, Download, Folder, Play, Trash } from "../icons";
 
 const spring = { type: "spring" as const, stiffness: 420, damping: 34 };
 
+// Сайт кладёт выбор в дерево data-id: озвучка → плеер → диапазон серий.
+// Уровней бывает два или три, поэтому имя берём по индексу, а не по типу.
+const LEVELS = ["Озвучка", "Плеер", "Диапазон"];
+
 export type Actions = {
   stream: (ep: Episode, quality: string) => void;
   download: (ep: Episode, quality: string, autoplay: boolean) => void;
   openFile: (ep: Episode) => void;
   deleteFile: (ep: Episode) => void;
   openDir: () => void;
+  resolvePlayer: (playerId: string) => Promise<void>;
   toggleWatched: (ep: Episode) => void;
   remember: (player?: string, quality?: string) => void;
 };
@@ -30,6 +35,8 @@ export default function TitleScreen({
   );
   const [pick, setPick] = useState<number | null>(null);
   const [quality, setQuality] = useState<string | null>(entry.lastQuality);
+  const [resolving, setResolving] = useState(false);
+  const tried = useRef(new Set<string>());
 
   const player = players.find((p) => p.id === playerId) ?? players[0];
   const episodes = player?.episodes ?? [];
@@ -47,7 +54,45 @@ export default function TitleScreen({
 
   const running = useMemo(() => Object.values(jobs), [jobs]);
 
+  const path = player?.path ?? [];
+  const depth = players.reduce((n, p) => Math.max(n, p.path.length), 0);
+
+  const matching = (prefix: string[]) =>
+    players.filter((p) => prefix.every((v, k) => p.path[k] === v));
+
+  const optionsAt = (level: number) => {
+    const seen: string[] = [];
+    for (const p of matching(path.slice(0, level))) {
+      const v = p.path[level];
+      if (v !== undefined && !seen.includes(v)) seen.push(v);
+    }
+    return seen;
+  };
+
+  const choose = (level: number, value: string) => {
+    const found = matching([...path.slice(0, level), value]);
+    // Держимся уже выбранного на уровнях ниже, если такая ветка ещё есть.
+    const next =
+      found.find((p) => path.slice(level + 1).every((v, k) => p.path[level + 1 + k] === v)) ??
+      found[0];
+    if (!next) return;
+    setPlayerId(next.id);
+    actions.remember(next.id, undefined);
+  };
+
+  // Уровень с единственным вариантом выбирать не из чего — не показываем.
+  const levels = Array.from({ length: depth }, (_, i) => i).filter((i) => optionsAt(i).length > 1);
+
   useEffect(() => setPick(null), [playerId]);
+
+  // У AllVideo и Sibnet ссылки лежат на их стороне — забираем при выборе озвучки.
+  const pending = Boolean(player?.resolvable) && episodes.every((e) => e.sources.length === 0);
+  useEffect(() => {
+    if (!pending || tried.current.has(playerId)) return;
+    tried.current.add(playerId);
+    setResolving(true);
+    actions.resolvePlayer(playerId).finally(() => setResolving(false));
+  }, [playerId, pending]);
 
   const dock = useRef<HTMLDivElement>(null);
   const docked = Boolean(episode && source);
@@ -103,23 +148,29 @@ export default function TitleScreen({
         </div>
       </div>
 
-      {players.length > 1 && (
+      {levels.length > 0 && (
         <div className="section">
-          <h3>Озвучка</h3>
-          <div className="pills">
-            {players.map((p) => (
-              <button
-                key={p.id}
-                className={`pill${p.id === player?.id ? " on" : ""}`}
-                onClick={() => {
-                  setPlayerId(p.id);
-                  actions.remember(p.id, undefined);
-                }}
-              >
-                {p.name} · {p.episodes.length}
-              </button>
-            ))}
-          </div>
+          {levels.map((level) => (
+            <div className="level" key={level}>
+              <h3>{LEVELS[level] ?? `Уровень ${level + 1}`}</h3>
+              <div className="pills">
+                {optionsAt(level).map((o) => (
+                  <button
+                    key={o}
+                    className={`pill${path[level] === o ? " on" : ""}`}
+                    onClick={() => choose(level, o)}
+                  >
+                    {o}
+                    {level === depth - 1 && (
+                      <span className="count">
+                        {matching([...path.slice(0, level), o])[0]?.episodes.length ?? 0}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -136,6 +187,7 @@ export default function TitleScreen({
                 <button
                   key={e.title + i}
                   className={`ep${i === pick ? " on" : seen ? " seen" : ""}`}
+                  disabled={pending}
                   onClick={() => setPick(i === pick ? null : i)}
                 >
                   {e.tag.replace(/^0/, "")}
@@ -152,6 +204,13 @@ export default function TitleScreen({
               );
             })}
           </div>
+        )}
+        {pending && (
+          <p className="hint" style={{ marginTop: 14 }}>
+            {resolving
+              ? "Забираем ссылки из плеера…"
+              : "Плеер не отдал ссылок — попробуйте другую озвучку."}
+          </p>
         )}
         {external.length > 0 && (
           <p className="hint" style={{ marginTop: 14 }}>
@@ -172,7 +231,7 @@ export default function TitleScreen({
           >
             <div className="label">
               {episode.title}
-              <small>{player?.name}</small>
+              <small>{path.join(" · ")}</small>
             </div>
 
             {qualities.length > 1 && (

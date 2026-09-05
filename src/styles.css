@@ -432,6 +432,15 @@ kbd {
   border-color: var(--accent);
 }
 
+.level + .level {
+  margin-top: 18px;
+}
+.pill .count {
+  margin-left: 7px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
 .eps {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));

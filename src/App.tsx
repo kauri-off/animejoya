@@ -149,7 +149,7 @@ export default function App() {
       const src = ep.sources.find((s) => s.quality === quality) ?? ep.sources[0];
       if (!src) return;
       if (settings?.streamByDefault) {
-        api.stream(src.url, ep.title).then(
+        api.stream(src.url, ep.title, src.referer).then(
           (bin) => toast(`Запущен ${bin}`),
           (e) => toast(String(e), true),
         );
@@ -167,6 +167,7 @@ export default function App() {
           episode: ep.title,
           quality: src.quality,
           sourceUrl: src.url,
+          referer: src.referer,
           autoplay,
         })
         .then(
@@ -194,6 +195,19 @@ export default function App() {
     },
     openDir: () => {
       if (open) api.openDir(open.dir).catch((e) => toast(String(e), true));
+    },
+    resolvePlayer: async (playerId) => {
+      if (!open) return;
+      try {
+        const episodes = await api.playerResolve(open.entry.url, playerId);
+        setOpen((t) =>
+          t
+            ? { ...t, players: t.players.map((p) => (p.id === playerId ? { ...p, episodes } : p)) }
+            : t,
+        );
+      } catch (e) {
+        toast(String(e), true);
+      }
     },
     toggleWatched: (ep) => {
       if (!open) return;

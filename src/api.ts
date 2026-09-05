@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type Fact = { key: string; value: string };
-export type Source = { quality: string; url: string };
+export type Source = { quality: string; url: string; referer: string };
 
 export type Entry = {
   url: string;
@@ -19,7 +19,7 @@ export type Entry = {
 };
 
 export type Episode = { title: string; tag: string; sources: Source[]; file: string | null };
-export type Player = { id: string; name: string; episodes: Episode[] };
+export type Player = { id: string; path: string[]; episodes: Episode[]; resolvable: boolean };
 export type Title = { entry: Entry; players: Player[]; external: string[]; dir: string };
 
 export type Settings = {
@@ -40,17 +40,21 @@ export const api = {
   librarySync: (force: boolean) => invoke<void>("library_sync", { force }),
   libraryRemove: (url: string) => invoke<void>("library_remove", { url }),
   titleOpen: (url: string) => invoke<Title>("title_open", { url }),
+  playerResolve: (url: string, playerId: string) =>
+    invoke<Episode[]>("player_resolve", { url, playerId }),
   rememberChoice: (url: string, player?: string, quality?: string) =>
     invoke<void>("remember_choice", { url, player, quality }),
   markWatched: (url: string, episode: string, watched: boolean) =>
     invoke<string[]>("mark_watched", { url, episode, watched }),
-  stream: (url: string, title: string) => invoke<string>("stream", { url, title }),
+  stream: (url: string, title: string, referer: string) =>
+    invoke<string>("stream", { url, title, referer }),
   playFile: (path: string, title: string) => invoke<string>("play_file", { path, title }),
   downloadStart: (a: {
     pageUrl: string;
     episode: string;
     quality: string;
     sourceUrl: string;
+    referer: string;
     autoplay: boolean;
   }) => invoke<string>("download_start", a),
   downloadCancel: (id: string) => invoke<void>("download_cancel", { id }),

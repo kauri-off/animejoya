@@ -46,7 +46,12 @@ fn candidates(configured: Option<&str>) -> Vec<Vec<String>> {
 }
 
 /// Запускает плеер и не ждёт его — окно приложения остаётся отзывчивым.
-pub async fn launch(configured: Option<&str>, target: &str, title: &str) -> Result<String> {
+pub async fn launch(
+    configured: Option<&str>,
+    target: &str,
+    title: &str,
+    referer: Option<&str>,
+) -> Result<String> {
     for c in candidates(configured) {
         let Some((bin, args)) = c.split_first() else {
             continue;
@@ -60,9 +65,20 @@ pub async fn launch(configured: Option<&str>, target: &str, title: &str) -> Resu
         match stem {
             "ffplay" => {
                 cmd.arg("-autoexit");
+                if let Some(r) = referer {
+                    cmd.arg("-headers").arg(format!("Referer: {r}\r\n"));
+                }
             }
             "mpv" => {
                 cmd.arg(format!("--force-media-title={title}"));
+                if let Some(r) = referer {
+                    cmd.arg(format!("--referrer={r}"));
+                }
+            }
+            "vlc" => {
+                if let Some(r) = referer {
+                    cmd.arg(format!("--http-referrer={r}"));
+                }
             }
             _ => {}
         }
