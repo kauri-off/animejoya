@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { rank, type Episode, type Progress, type Title } from "../api";
 import { Check, Download, Folder, Play, Trash } from "../icons";
@@ -48,6 +48,21 @@ export default function TitleScreen({
   const running = useMemo(() => Object.values(jobs), [jobs]);
 
   useEffect(() => setPick(null), [playerId]);
+
+  const dock = useRef<HTMLDivElement>(null);
+  const docked = Boolean(episode && source);
+
+  useEffect(() => {
+    const el = dock.current;
+    const root = document.documentElement;
+    if (!el) return;
+    const ro = new ResizeObserver(() => root.style.setProperty("--dock-h", `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.setProperty("--dock-h", "0px");
+    };
+  }, [docked]);
 
   return (
     <div className="detail">
@@ -148,6 +163,7 @@ export default function TitleScreen({
       <AnimatePresence>
         {episode && source && (
           <motion.div
+            ref={dock}
             className="dock"
             initial={{ opacity: 0, y: 26, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

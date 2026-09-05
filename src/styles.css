@@ -511,6 +511,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 10px;
+  max-width: calc(100vw - 24px);
   padding: 10px 12px;
   border-radius: 18px;
   border: 1px solid var(--line);
@@ -519,16 +520,25 @@ kbd {
 }
 
 .dock .label {
+  min-width: 0;
   padding: 0 8px 0 6px;
   font-size: 13px;
   font-weight: 560;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dock .label small {
   display: block;
   font-weight: 400;
   font-size: 11px;
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock .seg,
+.dock .act {
+  flex: none;
 }
 
 .seg {
@@ -593,9 +603,11 @@ kbd {
 .queue {
   position: fixed;
   right: 20px;
-  bottom: 20px;
+  /* --dock-h выставляет TitleScreen, чтобы очередь не наезжала на док */
+  bottom: calc(20px + var(--dock-h, 0px));
   z-index: 25;
-  width: 300px;
+  width: min(300px, calc(100vw - 40px));
+  transition: bottom 0.24s var(--ease);
   display: flex;
   flex-direction: column;
   gap: 8px;
