@@ -82,7 +82,6 @@ export const api = {
   downloadCancel: (id: string) => call<void>("download_cancel", { id }),
   fileDelete: (path: string) => call<void>("file_delete", { path }),
   openDir: (path: string) => call<void>("open_dir", { path }),
-  openUrl: (url: string) => call<void>("open_url", { url }),
 };
 
 type Handler = (payload: never) => void;

@@ -2,7 +2,6 @@ import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
 import type { Fact } from "./store.ts";
 
-export const ORIGIN = "https://animejoya.ru";
 export const SIBNET = "https://video.sibnet.ru";
 export const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
 
@@ -42,6 +41,9 @@ function usable(ep: Episode): boolean | null {
 }
 
 const absolute = (url: string): string => (url.startsWith("//") ? `https:${url}` : url);
+
+/// У сайта несколько доменов-зеркал — всё строим от того, с которого пришли.
+const originOf = (url: string): string => new URL(url).origin;
 
 const BASE_HEADERS: Record<string, string> = {
   "User-Agent": UA,
@@ -152,7 +154,7 @@ export class Site {
           headers: {
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Content-Type": "application/x-www-form-urlencoded",
-            Origin: ORIGIN,
+            Origin: originOf(referer),
             Referer: referer,
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
@@ -174,7 +176,7 @@ export class Site {
   }
 
   /// Страница чужого плеера — берём её так, как её брал бы iframe на сайте.
-  private async embedPage(url: string): Promise<string> {
+  private async embedPage(url: string, from: string): Promise<string> {
     let res: Response;
     try {
       res = await hop(
@@ -182,7 +184,7 @@ export class Site {
         {
           headers: {
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            Referer: `${ORIGIN}/`,
+            Referer: `${from}/`,
             "Sec-Fetch-Dest": "iframe",
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "cross-site",
@@ -198,24 +200,24 @@ export class Site {
   }
 
   /// Прямые ссылки для одной серии внешнего плеера.
-  async resolve(embed: string): Promise<Source[]> {
+  async resolve(embed: string, from: string): Promise<Source[]> {
     const url = absolute(embed);
     switch (kind(embed)) {
       case "direct":
         return parseSources(embed);
       case "allvideo":
-        return this.allvideo(url);
+        return this.allvideo(url, from);
       case "sibnet":
-        return this.sibnet(url);
+        return this.sibnet(url, from);
       default:
         throw new Error(`плеер ${url} не поддерживается`);
     }
   }
 
-  /// fsst.online редиректит на зеркало и отдаёт открытый конфиг PlayerJS —
-  /// формат `[качество]ссылка` там ровно тот же, что и у своего плеера сайта.
-  private async allvideo(url: string): Promise<Source[]> {
-    const html = await this.embedPage(url);
+  /// Формат `[качество]ссылка` у fsst.online тот же, что и у своего плеера сайта.
+  /// Referer оставляем пустым: CDN за ссылкой пускает только свой домен.
+  private async allvideo(url: string, from: string): Promise<Source[]> {
+    const html = await this.embedPage(url, from);
     const list = playerjsFile(html);
     const out = list ? parseQualityList(list) : [];
     if (out.length === 0) throw new Error("AllVideo не отдал ссылок на видео");
@@ -224,8 +226,8 @@ export class Site {
 
   /// Sibnet прячет видео за редиректом, который без своего Referer даёт 403.
   /// Ссылку `/v/..` не разворачиваем: она вечная, а вот CDN за ней — на пару часов.
-  private async sibnet(url: string): Promise<Source[]> {
-    const html = await this.embedPage(url);
+  private async sibnet(url: string, from: string): Promise<Source[]> {
+    const html = await this.embedPage(url, from);
     const p = sibnetPath(html);
     if (!p) throw new Error("Sibnet не отдал ссылки на видео");
     return [
@@ -239,7 +241,7 @@ export class Site {
 
   /// Плейлист приходит отдельным ajax-запросом, в HTML страницы его нет.
   async playlist(newsId: string, referer: string): Promise<Playlist> {
-    const url = `${ORIGIN}/engine/ajax/playlists.php?news_id=${newsId}&xfield=playlist`;
+    const url = `${originOf(referer)}/engine/ajax/playlists.php?news_id=${newsId}&xfield=playlist`;
     let res: Response;
     try {
       res = await hop(
@@ -353,19 +355,24 @@ export function parsePlaylist(html: string): Playlist {
   return new Playlist(players, episodes);
 }
 
-/// `//animejoya.ru/player/playerjs.html?skip=..&file=[1080p]https://..a.mp4,[720p]https://..b.mp4`
+/// `//animejoya.ru/player/playerjs.html?file=[1080p]https://..a.mp4,[720p]https://..b.mp4&skip=..`
 export function parseSources(dataFile: string): Source[] {
   if (!dataFile.includes("playerjs.html")) return [];
-  const i = dataFile.indexOf("file=");
-  if (i < 0) return [];
-  const raw = dataFile.slice(i + "file=".length);
-  let list: string;
-  try {
-    list = decodeURIComponent(raw);
-  } catch {
-    list = raw;
+  const q = dataFile.indexOf("?");
+  if (q < 0) return [];
+  // `skip` встречается и до, и после `file`, поэтому режем по границе параметра.
+  for (const pair of dataFile.slice(q + 1).split("&")) {
+    if (!pair.startsWith("file=")) continue;
+    const raw = pair.slice("file=".length);
+    let list: string;
+    try {
+      list = decodeURIComponent(raw);
+    } catch {
+      list = raw;
+    }
+    return parseQualityList(list);
   }
-  return parseQualityList(list);
+  return [];
 }
 
 /// `[1080p]https://a.mp4,[720p]https://b.mp4` — общий формат PlayerJS.
@@ -481,7 +488,7 @@ export function parseMeta(html: string): Meta {
   };
 }
 
-/// У гостя страница отдаётся с формой входа и без плейлиста.
+/// У гостя страница отдаётся без news_id; на зеркалах без входа он есть сразу.
 export function isAuthorized(html: string): boolean {
-  return !html.includes('name="login_name"') && parseNewsId(html) !== null;
+  return parseNewsId(html) !== null;
 }

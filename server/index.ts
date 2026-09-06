@@ -12,7 +12,6 @@ import { fetchFile } from "./download.ts";
 import type { Progress } from "./download.ts";
 import { assets } from "./assets.generated.ts";
 import {
-  ORIGIN,
   Playlist,
   Site,
   isAuthorized,
@@ -26,6 +25,15 @@ type PlayerView = { id: string; path: string[]; episodes: EpisodeView[]; resolva
 type TitleView = { entry: Entry; players: PlayerView[]; external: string[]; dir: string };
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/// Страница тайтла в DLE: `/<раздел>/<id>-<slug>.html` — домен может быть любым зеркалом.
+function isTitleUrl(url: string): boolean {
+  try {
+    return /\/\d+-[^/]*\.html?$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
 
 const site = new Site();
 const library: Entry[] = store.loadLibrary();
@@ -126,10 +134,11 @@ async function resolvePlayer(url: string, playerId: string): Promise<EpisodeView
   const cfg = store.loadSettings();
   const dir = path.join(store.videoDir(cfg), store.slug(url));
 
+  const from = new URL(url).origin;
   const resolved = await mapLimit(
     episodes.map((e) => e.embed),
     4,
-    (embed) => site.resolve(embed),
+    (embed) => site.resolve(embed, from),
   );
 
   const out: EpisodeView[] = [];
@@ -162,7 +171,7 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
   /// Добавляет ссылку и сразу подтягивает обложку с описанием.
   library_add: async ({ url }) => {
     const target = store.normalizeUrl(url as string);
-    if (!target.includes("animejoya")) throw new Error("это не ссылка на animejoya.ru");
+    if (!isTitleUrl(target)) throw new Error("это не ссылка на страницу тайтла");
     return upsert(target, parseMeta(await page(target)));
   },
 
@@ -187,24 +196,25 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     store.saveLibrary(library);
   },
 
+  /// Порядок задаёт клиент; неизвестные ссылки игнорируем, непришедшие оставляем в хвосте.
   library_reorder: async ({ urls }) => {
-    if (!Array.isArray(urls)) return library;
-    const urlList = urls as string[];
-    const map = new Map(library.map((e) => [e.url, e]));
+    const order: unknown = urls;
+    if (!Array.isArray(order) || order.some((u: unknown) => typeof u !== "string")) {
+      throw new Error("ожидался список ссылок");
+    }
+    const rest = new Map(library.map((e) => [e.url, e]));
     const next: Entry[] = [];
-    for (const u of urlList) {
-      const e = map.get(u);
+    for (const url of order as string[]) {
+      const e = rest.get(url);
       if (e) {
         next.push(e);
-        map.delete(u);
+        rest.delete(url);
       }
     }
-    for (const e of map.values()) {
-      next.push(e);
-    }
+    next.push(...rest.values());
+    store.saveLibrary(next);
     library.length = 0;
     library.push(...next);
-    store.saveLibrary(library);
     return library;
   },
 
@@ -258,7 +268,7 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
   /// Смотреть сразу с CDN, без сохранения файла.
   stream: async ({ url, title, referer }) => {
     const cfg = store.loadSettings();
-    const ref = (referer as string) === "" ? ORIGIN : (referer as string);
+    const ref = (referer as string) === "" ? null : (referer as string);
     return player.launch(cfg.player, url as string, title as string, ref);
   },
 
@@ -276,7 +286,7 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
 
     const ctrl = new AbortController();
     cancels.set(id, ctrl);
-    const ref = (referer as string) === "" ? ORIGIN : (referer as string);
+    const ref = referer as string;
 
     void (async () => {
       try {
@@ -313,13 +323,6 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
   open_dir: async ({ path: dir }) => {
     await fsp.mkdir(dir as string, { recursive: true });
     await player.reveal(dir as string);
-  },
-
-  open_url: async (args) => {
-    const u = (args as Record<string, unknown>).url;
-    if (typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"))) {
-      openBrowser(u);
-    }
   },
 };
 

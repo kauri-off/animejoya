@@ -21,11 +21,15 @@ const size = async (file: string): Promise<number | null> => {
   }
 };
 
+/// Пустой Referer шлём именно как отсутствие заголовка: CDN AllVideo режет чужие.
+const withReferer = (headers: Record<string, string>, referer: string): Record<string, string> =>
+  referer === "" ? headers : { ...headers, Referer: referer };
+
 /// HEAD на sibnet и filevideo отдаёт 403, поэтому размер спрашиваем диапазоном.
 async function remoteSize(url: string, referer: string): Promise<number | null> {
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": UA, Referer: referer, Range: "bytes=0-0" },
+      headers: withReferer({ "User-Agent": UA, Range: "bytes=0-0" }, referer),
       signal: AbortSignal.timeout(30_000),
     });
     await res.body?.cancel();
@@ -73,14 +77,16 @@ export async function fetchFile(
     return dest;
   }
 
-  const headers: Record<string, string> = {
-    "User-Agent": UA,
-    Accept: "video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5",
-    Referer: referer,
-    "Sec-Fetch-Dest": "video",
-    "Sec-Fetch-Mode": "no-cors",
-    "Sec-Fetch-Site": "cross-site",
-  };
+  const headers: Record<string, string> = withReferer(
+    {
+      "User-Agent": UA,
+      Accept: "video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5",
+      "Sec-Fetch-Dest": "video",
+      "Sec-Fetch-Mode": "no-cors",
+      "Sec-Fetch-Site": "cross-site",
+    },
+    referer,
+  );
   if (done > 0) headers.Range = `bytes=${done}-`;
 
   let res: Response;

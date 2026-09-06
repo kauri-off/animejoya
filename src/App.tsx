@@ -10,6 +10,14 @@ import { Back, ExternalLink, Gear, Plus, Refresh } from "./icons";
 type Toast = { id: number; text: string; bad?: boolean };
 type Sheet = "add" | "settings" | null;
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "сайте";
+  }
+};
+
 const page = {
   initial: { opacity: 0, y: 10 },
   animate: { opacity: 1, y: 0 },
@@ -96,10 +104,18 @@ export default function App() {
     api.libraryRemove(e.url).then(() => setLibrary((l) => l.filter((x) => x.url !== e.url)));
   }, []);
 
-  const reorderLibrary = useCallback(
-    (newItems: Entry[]) => {
-      setLibrary(newItems);
-      api.libraryReorder(newItems.map((e) => e.url)).catch((e) => toast(String(e), true));
+  const reorderLibrary = useCallback((next: Entry[]) => setLibrary(next), []);
+
+  const commitLibraryOrder = useCallback(
+    (next: Entry[]) => {
+      api
+        .libraryReorder(next.map((e) => e.url))
+        .then(setLibrary)
+        .catch((e) => {
+          toast(String(e), true);
+          return api.libraryGet().then(setLibrary);
+        })
+        .catch(() => {});
     },
     [toast],
   );
@@ -134,7 +150,7 @@ export default function App() {
     const onPaste = (e: ClipboardEvent) => {
       if (sheet || open) return;
       const text = e.clipboardData?.getData("text")?.trim() ?? "";
-      if (!text.includes("animejoya")) return;
+      if (!/^https?:\/\/\S+\/\d+-[^/]*\.html?$/.test(text)) return;
       setDraft(text);
       setAddError(null);
       setSheet("add");
@@ -259,7 +275,7 @@ export default function App() {
               target="_blank"
               rel="noopener noreferrer"
               className="ghost"
-              title="Открыть на сайте animejoya.ru"
+              title={`Открыть на ${hostOf(open.entry.url)}`}
             >
               <ExternalLink size={15} />
             </a>
@@ -296,7 +312,14 @@ export default function App() {
             </motion.div>
           ) : (
             <motion.div key="lib" {...page} style={{ height: "100%" }}>
-              <Library items={library} onOpen={openEntry} onRemove={removeEntry} onAdd={openAdd} onReorder={reorderLibrary} />
+              <Library
+                items={library}
+                onOpen={openEntry}
+                onRemove={removeEntry}
+                onAdd={openAdd}
+                onReorder={reorderLibrary}
+                onReorderCommit={commitLibraryOrder}
+              />
             </motion.div>
           )}
         </AnimatePresence>
