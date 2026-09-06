@@ -259,6 +259,7 @@ export default function App() {
             <Plus size={15} /> Ссылка
           </button>
         )}
+        <Queue jobs={jobs} onCancel={(id) => api.downloadCancel(id)} />
         <button className="ghost" title="Настройки" onClick={() => setSheet("settings")}>
           <Gear size={15} />
         </button>
@@ -281,8 +282,6 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
-
-      <Queue jobs={jobs} onCancel={(id) => api.downloadCancel(id)} />
 
       <div className="toasts">
         <AnimatePresence initial={false}>

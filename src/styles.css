@@ -609,30 +609,87 @@ kbd {
 }
 
 /* — очередь загрузок — */
-.queue {
-  position: fixed;
-  right: 20px;
-  /* --dock-h выставляет TitleScreen, чтобы очередь не наезжала на док */
-  bottom: calc(20px + var(--dock-h, 0px));
-  z-index: 25;
+.dl {
+  position: relative;
+  flex: none;
+}
+
+.dl-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--text);
+  background: var(--panel);
+  transition: background 0.18s, color 0.18s;
+}
+.dl-btn:hover {
+  background: var(--panel-strong);
+}
+
+.dl-btn .ring {
+  position: absolute;
+  inset: 0;
+  width: 34px;
+  height: 34px;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke-width: 2;
+}
+.dl-btn .ring .bg {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+.dl-btn .ring .fg {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s linear;
+}
+
+.dl-btn b {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 620;
+  line-height: 15px;
+}
+
+.dl-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -6px;
+  transform-origin: top right;
+  z-index: 30;
   width: min(300px, calc(100vw - 40px));
-  transition: bottom 0.24s var(--ease);
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .job {
-  padding: 11px 13px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: var(--panel-strong);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+  padding: 10px 11px;
+  border-radius: 11px;
+}
+.job:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 .job .row {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 7px;
   font-size: 12.5px;
 }
 .job .row b {
@@ -642,10 +699,17 @@ kbd {
   white-space: nowrap;
 }
 .job .row span {
-  margin-left: auto;
   color: var(--muted);
   font-size: 11px;
   flex: none;
+}
+.job .row .x {
+  margin-left: auto;
+  color: var(--muted);
+  flex: none;
+}
+.job .row .x:hover {
+  color: var(--danger);
 }
 .job .track {
   margin-top: 9px;
@@ -660,14 +724,6 @@ kbd {
   border-radius: 99px;
   background: var(--accent);
   transition: width 0.3s linear;
-}
-.job .x {
-  margin-left: 8px;
-  color: var(--muted);
-  flex: none;
-}
-.job .x:hover {
-  color: var(--danger);
 }
 
 /* — модальные окна — */

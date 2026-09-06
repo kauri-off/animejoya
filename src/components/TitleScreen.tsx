@@ -94,21 +94,6 @@ export default function TitleScreen({
     actions.resolvePlayer(playerId).finally(() => setResolving(false));
   }, [playerId, pending]);
 
-  const dock = useRef<HTMLDivElement>(null);
-  const docked = Boolean(episode && source);
-
-  useEffect(() => {
-    const el = dock.current;
-    const root = document.documentElement;
-    if (!el) return;
-    const ro = new ResizeObserver(() => root.style.setProperty("--dock-h", `${el.offsetHeight}px`));
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      root.style.setProperty("--dock-h", "0px");
-    };
-  }, [docked]);
-
   return (
     <div className="detail">
       <div className="hero">
@@ -222,7 +207,6 @@ export default function TitleScreen({
       <AnimatePresence>
         {episode && source && (
           <motion.div
-            ref={dock}
             className="dock"
             initial={{ opacity: 0, y: 26, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
