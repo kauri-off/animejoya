@@ -1,6 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-
 export type Fact = { key: string; value: string };
 export type Source = { quality: string; url: string; referer: string };
 
@@ -32,23 +29,47 @@ export type Settings = {
 
 export type Progress = { id: string; done: number; total: number; bytesPerSec: number };
 
+type Reply = { ok: boolean; data?: unknown; error?: string };
+
+// Отклоняемся голой строкой, как это делал Tauri: компоненты пишут String(e) в тост.
+async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/${name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+  } catch {
+    throw "нет связи с сервером AnimeJoy";
+  }
+  let body: Reply;
+  try {
+    body = (await res.json()) as Reply;
+  } catch {
+    throw `сервер ответил ${res.status}`;
+  }
+  if (!body.ok) throw body.error ?? `сервер ответил ${res.status}`;
+  return body.data as T;
+}
+
 export const api = {
-  settingsGet: () => invoke<Settings>("settings_get"),
-  settingsSet: (settings: Settings) => invoke<void>("settings_set", { settings }),
-  libraryGet: () => invoke<Entry[]>("library_get"),
-  libraryAdd: (url: string) => invoke<Entry>("library_add", { url }),
-  librarySync: (force: boolean) => invoke<void>("library_sync", { force }),
-  libraryRemove: (url: string) => invoke<void>("library_remove", { url }),
-  titleOpen: (url: string) => invoke<Title>("title_open", { url }),
+  settingsGet: () => call<Settings>("settings_get"),
+  settingsSet: (settings: Settings) => call<void>("settings_set", { settings }),
+  libraryGet: () => call<Entry[]>("library_get"),
+  libraryAdd: (url: string) => call<Entry>("library_add", { url }),
+  librarySync: (force: boolean) => call<void>("library_sync", { force }),
+  libraryRemove: (url: string) => call<void>("library_remove", { url }),
+  titleOpen: (url: string) => call<Title>("title_open", { url }),
   playerResolve: (url: string, playerId: string) =>
-    invoke<Episode[]>("player_resolve", { url, playerId }),
+    call<Episode[]>("player_resolve", { url, playerId }),
   rememberChoice: (url: string, player?: string, quality?: string) =>
-    invoke<void>("remember_choice", { url, player, quality }),
+    call<void>("remember_choice", { url, player, quality }),
   markWatched: (url: string, episode: string, watched: boolean) =>
-    invoke<string[]>("mark_watched", { url, episode, watched }),
+    call<string[]>("mark_watched", { url, episode, watched }),
   stream: (url: string, title: string, referer: string) =>
-    invoke<string>("stream", { url, title, referer }),
-  playFile: (path: string, title: string) => invoke<string>("play_file", { path, title }),
+    call<string>("stream", { url, title, referer }),
+  playFile: (path: string, title: string) => call<string>("play_file", { path, title }),
   downloadStart: (a: {
     pageUrl: string;
     episode: string;
@@ -56,21 +77,51 @@ export const api = {
     sourceUrl: string;
     referer: string;
     autoplay: boolean;
-  }) => invoke<string>("download_start", a),
-  downloadCancel: (id: string) => invoke<void>("download_cancel", { id }),
-  fileDelete: (path: string) => invoke<void>("file_delete", { path }),
-  openDir: (path: string) => invoke<void>("open_dir", { path }),
+  }) => call<string>("download_start", a),
+  downloadCancel: (id: string) => call<void>("download_cancel", { id }),
+  fileDelete: (path: string) => call<void>("file_delete", { path }),
+  openDir: (path: string) => call<void>("open_dir", { path }),
 };
 
+type Handler = (payload: never) => void;
+
+const handlers = new Map<string, Set<Handler>>();
+let stream: EventSource | null = null;
+
+// EventSource сам переподключается, поэтому поток поднимаем один раз на страницу.
+function ensure(): void {
+  if (stream !== null) return;
+  stream = new EventSource("/api/events");
+  stream.onmessage = (ev) => {
+    let parsed: { event: string; payload: never };
+    try {
+      parsed = JSON.parse(ev.data);
+    } catch {
+      return;
+    }
+    handlers.get(parsed.event)?.forEach((h) => h(parsed.payload));
+  };
+}
+
+function listen<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+  ensure();
+  const set = handlers.get(event) ?? new Set<Handler>();
+  set.add(cb as Handler);
+  handlers.set(event, set);
+  return Promise.resolve(() => {
+    set.delete(cb as Handler);
+  });
+}
+
 export const on = {
-  progress: (f: (p: Progress) => void) => listen<Progress>("download:progress", (e) => f(e.payload)),
+  progress: (f: (p: Progress) => void) => listen<Progress>("download:progress", f),
   done: (f: (p: { id: string; file: string }) => void) =>
-    listen<{ id: string; file: string }>("download:done", (e) => f(e.payload)),
+    listen<{ id: string; file: string }>("download:done", f),
   failed: (f: (p: { id: string; message: string }) => void) =>
-    listen<{ id: string; message: string }>("download:failed", (e) => f(e.payload)),
-  playerError: (f: (m: string) => void) => listen<string>("player:error", (e) => f(e.payload)),
-  entry: (f: (e: Entry) => void) => listen<Entry>("library:entry", (e) => f(e.payload)),
-  syncing: (f: (n: number) => void) => listen<number>("library:syncing", (e) => f(e.payload)),
+    listen<{ id: string; message: string }>("download:failed", f),
+  playerError: (f: (m: string) => void) => listen<string>("player:error", f),
+  entry: (f: (e: Entry) => void) => listen<Entry>("library:entry", f),
+  syncing: (f: (n: number) => void) => listen<number>("library:syncing", f),
 };
 
 export function bytes(n: number): string {

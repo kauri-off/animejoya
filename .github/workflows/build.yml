@@ -20,12 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             name: linux
-            bundles: deb,appimage
           - os: windows-latest
             name: windows
-            bundles: nsis,msi
 
     runs-on: ${{ matrix.os }}
 
@@ -37,47 +35,25 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
         with:
-          workspaces: src-tauri -> target
-          key: ${{ matrix.name }}
-
-      - name: Install Linux dependencies
-        if: matrix.name == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            libssl-dev \
-            build-essential \
-            patchelf \
-            file \
-            wget
+          bun-version: latest
 
       - run: npm ci
-
-      - uses: tauri-apps/tauri-action@v0
-        id: tauri
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles ${{ matrix.bundles }}
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: AnimeJoy ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
+      - run: npm run build
+      - run: npm run embed
+      - run: bun build --compile --minify server/index.ts --outfile animejoya
 
       - uses: actions/upload-artifact@v4
         with:
           name: animejoya-${{ matrix.name }}
           if-no-files-found: error
-          path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/msi/*.msi
+          path: animejoya*
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: AnimeJoy ${{ github.ref_name }}
+          files: animejoya*

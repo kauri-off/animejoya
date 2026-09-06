@@ -5,25 +5,25 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:server": "bun run --watch server/index.ts --no-open",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
+    "start": "bun run server/index.ts",
+    "embed": "node scripts/embed.mjs",
+    "compile": "npm run build && npm run embed && bun build --compile --minify server/index.ts --outfile animejoya && npm run embed:clean",
+    "embed:clean": "node scripts/embed.mjs --stub"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
+    "cheerio": "^1",
     "motion": "^12",
     "react": "^19",
     "react-dom": "^19"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
     "typescript": "^5",
     "vite": "^6"
-  },
-  "allowScripts": {
-    "esbuild@0.25.12": true
   }
 }
