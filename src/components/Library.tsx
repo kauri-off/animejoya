@@ -23,6 +23,8 @@ type SlotGeometry = {
   cy: number;
 };
 
+const DRAG_DISTANCE_THRESHOLD = 8;
+
 const SPRING_CONFIG = {
   type: "spring" as const,
   stiffness: 320,
@@ -57,7 +59,6 @@ function Library({
   const dragEndedAtRef = useRef(0);
 
   const slotsRef = useRef<SlotGeometry[]>([]);
-  const holdTimerRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const scrollSpeedRef = useRef(0);
   const lastPointerRef = useRef({ x: 0, y: 0 });
@@ -72,11 +73,10 @@ function Library({
     }
   }, [items]);
 
-  // Clean up body class, timers, and animation frames on unmount
+  // Clean up body class and animation frames on unmount
   useEffect(() => {
     return () => {
       document.body.classList.remove("is-dragging");
-      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
       if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
     };
   }, []);
@@ -217,11 +217,6 @@ function Library({
         startAutoScroll();
       };
 
-      // Press and hold timer: 160ms hold engages drag
-      holdTimerRef.current = window.setTimeout(() => {
-        startDrag(lastPointerRef.current.x, lastPointerRef.current.y);
-      }, 160);
-
       const onPointerMove = (moveEv: PointerEvent) => {
         const currX = moveEv.clientX;
         const currY = moveEv.clientY;
@@ -229,16 +224,13 @@ function Library({
 
         if (!started) {
           const dist = Math.hypot(currX - startX, currY - startY);
-          if (dist > 4) {
-            if (holdTimerRef.current) {
-              clearTimeout(holdTimerRef.current);
-              holdTimerRef.current = null;
-            }
+          // Only start dragging when the pointer moves beyond the distance threshold
+          if (dist >= DRAG_DISTANCE_THRESHOLD) {
+            window.getSelection()?.removeAllRanges();
             startDrag(currX, currY);
+            checkSlotHover(currX, currY);
           }
-        }
-
-        if (started) {
+        } else {
           if (previewElRef.current) {
             previewElRef.current.style.transform = `translate3d(${currX - offsetX}px, ${currY - offsetY}px, 0)`;
           }
@@ -266,10 +258,6 @@ function Library({
       };
 
       const cleanupListeners = () => {
-        if (holdTimerRef.current) {
-          clearTimeout(holdTimerRef.current);
-          holdTimerRef.current = null;
-        }
         if (scrollRafRef.current) {
           cancelAnimationFrame(scrollRafRef.current);
           scrollRafRef.current = null;
@@ -359,7 +347,7 @@ function Library({
 
   const handleClick = useCallback(
     (e: Entry) => {
-      if (Date.now() - dragEndedAtRef.current < 180) return;
+      if (Date.now() - dragEndedAtRef.current < 250) return;
       onOpen(e);
     },
     [onOpen],

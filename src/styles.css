@@ -194,6 +194,8 @@ body.is-dragging .card:hover .kill {
   cursor: grab;
   touch-action: pan-y;
   -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .card:active {
   cursor: grabbing;
