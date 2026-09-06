@@ -60,6 +60,7 @@ export const api = {
   libraryAdd: (url: string) => call<Entry>("library_add", { url }),
   librarySync: (force: boolean) => call<void>("library_sync", { force }),
   libraryRemove: (url: string) => call<void>("library_remove", { url }),
+  libraryReorder: (urls: string[]) => call<Entry[]>("library_reorder", { urls }),
   titleOpen: (url: string) => call<Title>("title_open", { url }),
   playerResolve: (url: string, playerId: string) =>
     call<Episode[]>("player_resolve", { url, playerId }),
@@ -81,6 +82,7 @@ export const api = {
   downloadCancel: (id: string) => call<void>("download_cancel", { id }),
   fileDelete: (path: string) => call<void>("file_delete", { path }),
   openDir: (path: string) => call<void>("open_dir", { path }),
+  openUrl: (url: string) => call<void>("open_url", { url }),
 };
 
 type Handler = (payload: never) => void;

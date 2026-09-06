@@ -118,12 +118,14 @@ button {
 .ghost {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   height: 34px;
   padding: 0 13px;
   border-radius: 10px;
   color: var(--muted);
   border: 1px solid transparent;
+  text-decoration: none;
   transition: background 0.18s, color 0.18s, border-color 0.18s;
 }
 .ghost:hover {
@@ -165,13 +167,78 @@ button {
   padding: 28px 26px 120px;
 }
 
+body.is-dragging {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+body.is-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+body.is-dragging .card:hover .poster {
+  transform: none !important;
+}
+body.is-dragging .card:hover .kill {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 .card {
   position: relative;
   text-align: left;
   display: flex;
   flex-direction: column;
   gap: 9px;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: pan-y;
+  -webkit-user-drag: none;
+}
+.card:active {
+  cursor: grabbing;
+}
+
+/* Drop target placeholder in the grid */
+.card.placeholder {
+  pointer-events: none;
+}
+.card.placeholder .poster {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1.5px dashed rgba(255, 255, 255, 0.22) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+.card.placeholder .poster img,
+.card.placeholder .poster .blank,
+.card.placeholder .poster .badge,
+.card.placeholder .poster .kill {
+  opacity: 0.12 !important;
+}
+.card.placeholder .name,
+.card.placeholder .sub {
+  opacity: 0.25 !important;
+}
+
+/* Floating card lifted under pointer */
+.drag-floating-card {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  will-change: transform;
+}
+.drag-floating-card .card.floating {
+  margin: 0;
+  pointer-events: none;
+  transform: scale(1.035);
+  filter: drop-shadow(0 20px 42px rgba(0, 0, 0, 0.75));
+  transition: transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1), filter 0.16s ease;
+}
+.drag-floating-card .card.floating .poster {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 16px 36px rgba(0, 0, 0, 0.55);
 }
 
 .poster {

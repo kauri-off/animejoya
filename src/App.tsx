@@ -5,7 +5,7 @@ import Library from "./components/Library";
 import TitleScreen, { type Actions } from "./components/TitleScreen";
 import Queue from "./components/Queue";
 import { AddSheet, SettingsSheet } from "./components/Sheets";
-import { Back, Gear, Plus, Refresh } from "./icons";
+import { Back, ExternalLink, Gear, Plus, Refresh } from "./icons";
 
 type Toast = { id: number; text: string; bad?: boolean };
 type Sheet = "add" | "settings" | null;
@@ -95,6 +95,14 @@ export default function App() {
   const removeEntry = useCallback((e: Entry) => {
     api.libraryRemove(e.url).then(() => setLibrary((l) => l.filter((x) => x.url !== e.url)));
   }, []);
+
+  const reorderLibrary = useCallback(
+    (newItems: Entry[]) => {
+      setLibrary(newItems);
+      api.libraryReorder(newItems.map((e) => e.url)).catch((e) => toast(String(e), true));
+    },
+    [toast],
+  );
 
   const openAdd = useCallback(() => {
     setDraft("");
@@ -245,9 +253,20 @@ export default function App() {
         <div className="spacer" />
 
         {open && (
-          <button className="ghost" title="Обновить" onClick={() => load(open.entry.url)}>
-            <Refresh size={15} />
-          </button>
+          <>
+            <a
+              href={open.entry.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ghost"
+              title="Открыть на сайте animejoya.ru"
+            >
+              <ExternalLink size={15} />
+            </a>
+            <button className="ghost" title="Обновить" onClick={() => load(open.entry.url)}>
+              <Refresh size={15} />
+            </button>
+          </>
         )}
         {!open && syncing > 0 && (
           <div className="sync">
@@ -277,7 +296,7 @@ export default function App() {
             </motion.div>
           ) : (
             <motion.div key="lib" {...page} style={{ height: "100%" }}>
-              <Library items={library} onOpen={openEntry} onRemove={removeEntry} onAdd={openAdd} />
+              <Library items={library} onOpen={openEntry} onRemove={removeEntry} onAdd={openAdd} onReorder={reorderLibrary} />
             </motion.div>
           )}
         </AnimatePresence>

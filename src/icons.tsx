@@ -61,3 +61,10 @@ export const Refresh = ({ size }: P) => (
     <path d="M20 11a8 8 0 1 0-.6 4M20 5v6h-6" />
   </svg>
 );
+export const ExternalLink = ({ size }: P) => (
+  <svg {...base(size)}>
+    <path d="M15 3h6v6" />
+    <path d="M10 14L21 3" />
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+  </svg>
+);

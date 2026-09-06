@@ -187,6 +187,27 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     store.saveLibrary(library);
   },
 
+  library_reorder: async ({ urls }) => {
+    if (!Array.isArray(urls)) return library;
+    const urlList = urls as string[];
+    const map = new Map(library.map((e) => [e.url, e]));
+    const next: Entry[] = [];
+    for (const u of urlList) {
+      const e = map.get(u);
+      if (e) {
+        next.push(e);
+        map.delete(u);
+      }
+    }
+    for (const e of map.values()) {
+      next.push(e);
+    }
+    library.length = 0;
+    library.push(...next);
+    store.saveLibrary(library);
+    return library;
+  },
+
   /// Полная карточка тайтла: озвучки, серии, что уже лежит на диске.
   title_open: async ({ url }): Promise<TitleView> => {
     const target = store.normalizeUrl(url as string);
@@ -292,6 +313,13 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
   open_dir: async ({ path: dir }) => {
     await fsp.mkdir(dir as string, { recursive: true });
     await player.reveal(dir as string);
+  },
+
+  open_url: async (args) => {
+    const u = (args as Record<string, unknown>).url;
+    if (typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"))) {
+      openBrowser(u);
+    }
   },
 };
 
