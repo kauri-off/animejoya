@@ -22,6 +22,11 @@
   user-select: none;
 }
 
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
 html,
 body,
 #root {
@@ -51,6 +56,8 @@ button {
   background: none;
   border: none;
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 ::-webkit-scrollbar {
@@ -312,6 +319,8 @@ button {
   color: var(--muted);
   max-width: 380px;
   line-height: 1.6;
+  -webkit-user-select: text;
+  user-select: text;
 }
 kbd {
   padding: 2px 6px;
@@ -327,6 +336,21 @@ kbd {
   padding: 26px 26px 160px;
   max-width: 1080px;
   margin: 0 auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.detail * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.detail button,
+.detail button *,
+.detail .poster,
+.detail .poster * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .hero {
