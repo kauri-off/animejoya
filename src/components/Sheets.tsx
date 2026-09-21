@@ -116,10 +116,10 @@ export function SettingsSheet({
           />
         </label>
         <label className="field">
-          <span>Плеер</span>
+          <span>Внешний плеер</span>
           <input
             value={s.player ?? ""}
-            placeholder="mpv (по умолчанию — mpv, vlc, ffplay)"
+            placeholder="mpv, vlc или ffplay"
             onChange={(e) => set({ player: e.target.value || null })}
           />
         </label>
@@ -128,7 +128,7 @@ export function SettingsSheet({
           onClick={() => set({ streamByDefault: !s.streamByDefault })}
         >
           <i />
-          Смотреть потоком, не сохраняя файл
+          Внешний плеер: потоком, не сохраняя файл
         </div>
         <div className="buttons">
           <button type="button" className="ghost" onClick={onClose}>

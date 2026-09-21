@@ -156,7 +156,7 @@ export default function App() {
       setSheet("add");
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || document.fullscreenElement) return;
       if (sheet) setSheet(null);
       else if (open) setOpen(null);
     };
@@ -233,6 +233,7 @@ export default function App() {
         toast(String(e), true);
       }
     },
+    markWatched: (ep) => markWatched(ep, true),
     toggleWatched: (ep) => {
       if (!open) return;
       markWatched(ep, !open.entry.watched.includes(ep.title));
@@ -256,8 +257,8 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         {open ? (
-          <button className="ghost" onClick={() => setOpen(null)}>
-            <Back size={15} /> Библиотека
+          <button className="ghost" title="Библиотека" onClick={() => setOpen(null)}>
+            <Back size={15} /> <span className="wide">Библиотека</span>
           </button>
         ) : (
           <div className="brand">
@@ -286,12 +287,12 @@ export default function App() {
         )}
         {!open && syncing > 0 && (
           <div className="sync">
-            <span className="spin" /> Обложки: {syncing}
+            <span className="spin" /> <span className="wide">Обложки:</span> {syncing}
           </div>
         )}
         {!open && (
-          <button className="primary" onClick={openAdd}>
-            <Plus size={15} /> Ссылка
+          <button className="primary" title="Добавить по ссылке" onClick={openAdd}>
+            <Plus size={15} /> <span className="wide">Ссылка</span>
           </button>
         )}
         <Queue jobs={jobs} onCancel={(id) => api.downloadCancel(id)} />

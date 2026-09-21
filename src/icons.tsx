@@ -68,3 +68,19 @@ export const ExternalLink = ({ size }: P) => (
     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
   </svg>
 );
+export const Prev = ({ size }: P) => (
+  <svg {...base(size)}>
+    <path d="M18 6 9 12l9 6zM6 6v12" />
+  </svg>
+);
+export const Next = ({ size }: P) => (
+  <svg {...base(size)}>
+    <path d="m6 6 9 6-9 6zM18 6v12" />
+  </svg>
+);
+export const Screen = ({ size }: P) => (
+  <svg {...base(size)}>
+    <rect x="3" y="4.5" width="18" height="12" rx="2" />
+    <path d="M8 20h8M12 16.5V20" />
+  </svg>
+);

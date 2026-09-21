@@ -140,3 +140,9 @@ export function bytes(n: number): string {
 export function rank(quality: string): number {
   return parseInt(quality, 10) || 0;
 }
+
+export const media = {
+  file: (file: string) => `/media/file?path=${encodeURIComponent(file)}`,
+  remote: (s: Source) =>
+    `/media/remote?url=${encodeURIComponent(s.url)}&referer=${encodeURIComponent(s.referer)}`,
+};

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import * as store from "./store.ts";
 import type { Entry, Settings } from "./store.ts";
 import * as player from "./player.ts";
+import * as media from "./media.ts";
 import { fetchFile } from "./download.ts";
 import type { Progress } from "./download.ts";
 import { assets } from "./assets.generated.ts";
@@ -440,6 +441,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, na
   }
 }
 
+async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, raw: string): Promise<void> {
+  if (!media.sameSite(req)) {
+    res.writeHead(403).end();
+    return;
+  }
+  const u = new URL(raw, "http://local");
+  const q = (k: string): string => u.searchParams.get(k) ?? "";
+  if (u.pathname === "/media/file") {
+    await media.serveFile(req, res, store.videoDir(store.loadSettings()), q("path"));
+  } else if (u.pathname === "/media/remote") {
+    await media.proxy(req, res, q("url"), q("referer"));
+  } else {
+    res.writeHead(404).end();
+  }
+}
+
 const server = http.createServer((req, res) => {
   void (async () => {
     if (!allowed(req)) {
@@ -447,7 +464,8 @@ const server = http.createServer((req, res) => {
       return;
     }
     const url = req.url ?? "/";
-    if (url === "/api/events") sse(req, res);
+    if (url.startsWith("/media/")) await serveMedia(req, res, url);
+    else if (url === "/api/events") sse(req, res);
     else if (url.startsWith("/api/")) await handleApi(req, res, url.slice("/api/".length));
     else await serveStatic(res, url);
   })().catch(() => {
