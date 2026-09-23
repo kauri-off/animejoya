@@ -22,9 +22,6 @@ export type Title = { entry: Entry; players: Player[]; external: string[]; dir: 
 export type Settings = {
   username: string;
   password: string;
-  videoDir: string | null;
-  player: string | null;
-  streamByDefault: boolean;
 };
 
 export type Progress = { id: string; done: number; total: number; bytesPerSec: number };
@@ -68,20 +65,15 @@ export const api = {
     call<void>("remember_choice", { url, player, quality }),
   markWatched: (url: string, episode: string, watched: boolean) =>
     call<string[]>("mark_watched", { url, episode, watched }),
-  stream: (url: string, title: string, referer: string) =>
-    call<string>("stream", { url, title, referer }),
-  playFile: (path: string, title: string) => call<string>("play_file", { path, title }),
-  downloadStart: (a: {
+  preloadStart: (a: {
     pageUrl: string;
     episode: string;
     quality: string;
     sourceUrl: string;
     referer: string;
-    autoplay: boolean;
-  }) => call<string>("download_start", a),
-  downloadCancel: (id: string) => call<void>("download_cancel", { id }),
-  fileDelete: (path: string) => call<void>("file_delete", { path }),
-  openDir: (path: string) => call<void>("open_dir", { path }),
+  }) => call<string>("preload_start", a),
+  preloadCancel: (id: string) => call<void>("preload_cancel", { id }),
+  cacheDrop: (path: string) => call<void>("cache_drop", { path }),
 };
 
 type Handler = (payload: never) => void;
@@ -115,12 +107,11 @@ function listen<T>(event: string, cb: (payload: T) => void): Promise<() => void>
 }
 
 export const on = {
-  progress: (f: (p: Progress) => void) => listen<Progress>("download:progress", f),
+  progress: (f: (p: Progress) => void) => listen<Progress>("preload:progress", f),
   done: (f: (p: { id: string; file: string }) => void) =>
-    listen<{ id: string; file: string }>("download:done", f),
+    listen<{ id: string; file: string }>("preload:done", f),
   failed: (f: (p: { id: string; message: string }) => void) =>
-    listen<{ id: string; message: string }>("download:failed", f),
-  playerError: (f: (m: string) => void) => listen<string>("player:error", f),
+    listen<{ id: string; message: string }>("preload:failed", f),
   entry: (f: (e: Entry) => void) => listen<Entry>("library:entry", f),
   syncing: (f: (n: number) => void) => listen<number>("library:syncing", f),
 };
@@ -141,8 +132,18 @@ export function rank(quality: string): number {
   return parseInt(quality, 10) || 0;
 }
 
+const nameParam = (name?: string) => (name ? `&name=${encodeURIComponent(name)}` : "");
+
+// С `name` сервер отдаёт файл как вложение, и его забирает менеджер загрузок браузера.
 export const media = {
-  file: (file: string) => `/media/file?path=${encodeURIComponent(file)}`,
-  remote: (s: Source) =>
-    `/media/remote?url=${encodeURIComponent(s.url)}&referer=${encodeURIComponent(s.referer)}`,
+  file: (file: string, name?: string) => `/media/file?path=${encodeURIComponent(file)}${nameParam(name)}`,
+  remote: (s: Source, name?: string) =>
+    `/media/remote?url=${encodeURIComponent(s.url)}&referer=${encodeURIComponent(s.referer)}${nameParam(name)}`,
 };
+
+export function saveAs(url: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  a.click();
+}

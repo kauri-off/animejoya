@@ -1,7 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
-import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { UA } from "./site.ts";
@@ -22,18 +21,23 @@ function parseRange(header: string | undefined, size: number): [number, number] 
   return start <= end ? [start, end] : null;
 }
 
-/// Отдаёт серию с диска; путь обязан лежать внутри папки с видео.
+/// С `name` браузер сохраняет файл своим менеджером загрузок, а не играет его.
+function attachment(name: string): Record<string, string> {
+  if (name === "") return {};
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const utf = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16)}`);
+  return {
+    "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${utf}`,
+  };
+}
+
+/// Отдаёт серию из кэша; путь уже проверен вызывающим.
 export async function serveFile(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  root: string,
-  file: string,
+  abs: string,
+  name: string,
 ): Promise<void> {
-  const abs = path.resolve(file);
-  if (!abs.startsWith(path.resolve(root) + path.sep) || path.extname(abs) !== ".mp4") {
-    res.writeHead(403).end();
-    return;
-  }
   let size: number;
   try {
     size = (await fsp.stat(abs)).size;
@@ -42,7 +46,12 @@ export async function serveFile(
     return;
   }
 
-  const head = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "no-store" };
+  const head = {
+    "Content-Type": "video/mp4",
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "no-store",
+    ...attachment(name),
+  };
   const range = req.headers.range === undefined ? null : parseRange(req.headers.range, size);
   if (req.headers.range !== undefined && range === null) {
     res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
@@ -69,6 +78,7 @@ export async function proxy(
   res: http.ServerResponse,
   url: string,
   referer: string,
+  name: string,
 ): Promise<void> {
   if (!/^https?:\/\//.test(url)) {
     res.writeHead(400).end();
@@ -92,7 +102,7 @@ export async function proxy(
     return;
   }
 
-  const out: Record<string, string> = { "Cache-Control": "no-store" };
+  const out: Record<string, string> = { "Cache-Control": "no-store", ...(up.ok ? attachment(name) : {}) };
   for (const h of PASS) {
     const v = up.headers.get(h);
     if (v !== null) out[h] = v;

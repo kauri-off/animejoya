@@ -48,7 +48,7 @@ export default function Queue({
           exit={{ opacity: 0, scale: 0.8 }}
           transition={{ type: "spring", stiffness: 480, damping: 32 }}
         >
-          <button className="dl-btn" title="Загрузки" onClick={() => setOpen((o) => !o)}>
+          <button className="dl-btn" title="Предзагрузка" onClick={() => setOpen((o) => !o)}>
             <svg className="ring" viewBox="0 0 32 32">
               <circle className="bg" cx="16" cy="16" r="15" />
               <circle

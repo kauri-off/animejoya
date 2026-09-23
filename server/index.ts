@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import * as store from "./store.ts";
 import type { Entry, Settings } from "./store.ts";
-import * as player from "./player.ts";
+import * as cache from "./cache.ts";
 import * as media from "./media.ts";
 import { fetchFile } from "./download.ts";
 import type { Progress } from "./download.ts";
@@ -98,8 +98,10 @@ function episodeView(e: Episode, dir: string): EpisodeView {
   return { title: e.title, tag, sources: e.sources, file };
 }
 
-const destPath = (cfg: Settings, pageUrl: string, epTitle: string, quality: string): string =>
-  path.join(store.videoDir(cfg), store.slug(pageUrl), `${store.epTag(epTitle)}-${quality}.mp4`);
+const destPath = (pageUrl: string, epTitle: string, quality: string): string =>
+  path.join(cache.dirOf(store.slug(pageUrl)), `${store.epTag(epTitle)}-${quality}.mp4`);
+
+const sweep = (): void => void cache.sweep(new Set(cancels.keys())).catch(() => {});
 
 /// Не больше четырёх запросов разом, чтобы не ловить лимиты чужого сайта.
 async function mapLimit<T, R>(
@@ -132,8 +134,7 @@ async function resolvePlayer(url: string, playerId: string): Promise<EpisodeView
   const episodes = playlist.episodesOf(playerId);
   if (episodes.length === 0) throw new Error("у этой озвучки нет серий");
 
-  const cfg = store.loadSettings();
-  const dir = path.join(store.videoDir(cfg), store.slug(url));
+  const dir = cache.dirOf(store.slug(url));
 
   const from = new URL(url).origin;
   const resolved = await mapLimit(
@@ -219,7 +220,7 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     return library;
   },
 
-  /// Полная карточка тайтла: озвучки, серии, что уже лежит на диске.
+  /// Полная карточка тайтла: озвучки, серии, что уже лежит в кэше.
   title_open: async ({ url }): Promise<TitleView> => {
     const target = store.normalizeUrl(url as string);
     const html = await page(target);
@@ -229,8 +230,7 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     const meta = parseMeta(html);
     const playlist = await site.playlist(newsId, target);
 
-    const cfg = store.loadSettings();
-    const dir = path.join(store.videoDir(cfg), store.slug(target));
+    const dir = cache.dirOf(store.slug(target));
 
     const players: PlayerView[] = playlist.playable().map((c) => ({
       id: c.id,
@@ -266,80 +266,64 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     return e.watched;
   },
 
-  /// Смотреть сразу с CDN, без сохранения файла.
-  stream: async ({ url, title, referer }) => {
-    const cfg = store.loadSettings();
-    const ref = (referer as string) === "" ? null : (referer as string);
-    return player.launch(cfg.player, url as string, title as string, ref);
-  },
-
-  play_file: async ({ path: file, title }) => {
-    const cfg = store.loadSettings();
-    return player.launch(cfg.player, file as string, title as string, null);
-  },
-
-  /// Ставит серию в загрузку; прогресс приходит событиями `download:*`.
-  download_start: async ({ pageUrl, episode, quality, sourceUrl, referer, autoplay }) => {
-    const cfg = store.loadSettings();
-    const dest = destPath(cfg, pageUrl as string, episode as string, quality as string);
+  /// Кладёт серию во временный кэш, чтобы смотреть без подгрузок; прогресс — событиями `preload:*`.
+  preload_start: async ({ pageUrl, episode, quality, sourceUrl, referer }) => {
+    const dest = destPath(pageUrl as string, episode as string, quality as string);
     const id = dest;
     if (cancels.has(id)) return id;
 
     const ctrl = new AbortController();
     cancels.set(id, ctrl);
-    const ref = referer as string;
 
     void (async () => {
       try {
-        const file = await fetchFile(sourceUrl as string, ref, dest, ctrl.signal, (done, total, bytesPerSec) => {
-          emit("download:progress", { id, done, total, bytesPerSec } satisfies Progress);
+        const file = await fetchFile(sourceUrl as string, referer as string, dest, ctrl.signal, (done, total, bytesPerSec) => {
+          emit("preload:progress", { id, done, total, bytesPerSec } satisfies Progress);
         });
         cancels.delete(id);
-        emit("download:done", { id, file });
-        if (autoplay) {
-          try {
-            await player.launch(cfg.player, file, episode as string, null);
-          } catch (e) {
-            emit("player:error", msg(e));
-          }
-        }
+        emit("preload:done", { id, file });
+        sweep();
       } catch (e) {
         cancels.delete(id);
-        emit("download:failed", { id, message: msg(e) });
+        emit("preload:failed", { id, message: msg(e) });
       }
     })();
 
     return id;
   },
 
-  download_cancel: async ({ id }) => {
+  preload_cancel: async ({ id }) => {
     cancels.get(id as string)?.abort();
     cancels.delete(id as string);
   },
 
-  file_delete: async ({ path: file }) => {
-    await fsp.rm(file as string);
-  },
-
-  open_dir: async ({ path: dir }) => {
-    await fsp.mkdir(dir as string, { recursive: true });
-    await player.reveal(dir as string);
+  cache_drop: async ({ path: file }) => {
+    const abs = cache.inside(file as string);
+    if (abs === null) throw new Error("файл вне кэша");
+    await fsp.rm(abs, { force: true });
   },
 };
 
-const HOST = "127.0.0.1";
+const HOST = process.env.ANIMEJOYA_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.ANIMEJOYA_PORT ?? 7788);
 
-/// Сервер слушает только петлю, но этого мало: сторонняя страница в браузере
-/// может слать сюда запросы. Поэтому сверяем Host и Origin.
+/// Домены, под которыми сервер виден снаружи (например, через Caddy), через запятую.
+const hosts = new Set([
+  "127.0.0.1",
+  "localhost",
+  "[::1]",
+  "::1",
+  ...(process.env.ANIMEJOYA_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
+]);
+
+/// Сверяем Host и Origin: иначе сторонняя страница или DNS rebinding дотянутся до API.
 function allowed(req: http.IncomingMessage): boolean {
-  const local = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
-  const host = (req.headers.host ?? "").replace(/:\d+$/, "");
-  if (!local.has(host)) return false;
+  const host = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  if (!hosts.has(host)) return false;
   const origin = req.headers.origin;
   if (origin === undefined) return true;
   try {
-    return local.has(new URL(origin).hostname);
+    return hosts.has(new URL(origin).hostname.toLowerCase());
   } catch {
     return false;
   }
@@ -449,9 +433,15 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, r
   const u = new URL(raw, "http://local");
   const q = (k: string): string => u.searchParams.get(k) ?? "";
   if (u.pathname === "/media/file") {
-    await media.serveFile(req, res, store.videoDir(store.loadSettings()), q("path"));
+    const abs = cache.inside(q("path"));
+    if (abs === null) {
+      res.writeHead(403).end();
+      return;
+    }
+    cache.touch(abs);
+    await media.serveFile(req, res, abs, q("name"));
   } else if (u.pathname === "/media/remote") {
-    await media.proxy(req, res, q("url"), q("referer"));
+    await media.proxy(req, res, q("url"), q("referer"), q("name"));
   } else {
     res.writeHead(404).end();
   }
@@ -478,12 +468,20 @@ function openBrowser(url: string): void {
   const bin = win ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
   const args = win ? ["/c", "start", "", url] : [url];
   try {
-    spawn(bin, args, { detached: true, stdio: "ignore" }).unref();
+    const child = spawn(bin, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
   } catch {}
 }
 
+sweep();
+setInterval(sweep, 1_800_000).unref();
+
+// В контейнере сервер — PID 1, и без явного обработчика SIGTERM игнорируется.
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => process.exit(0));
+
 server.listen(PORT, HOST, () => {
-  const url = `http://${HOST}:${PORT}/`;
+  const url = `http://${HOST.includes(":") ? `[${HOST}]` : HOST}:${PORT}/`;
   console.log(`AnimeJoy: ${url}`);
   if (process.env.ANIMEJOYA_NO_OPEN === undefined && !process.argv.includes("--no-open")) openBrowser(url);
 });

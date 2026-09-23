@@ -107,29 +107,6 @@ export function SettingsSheet({
             onChange={(e) => set({ password: e.target.value })}
           />
         </label>
-        <label className="field">
-          <span>Папка для серий</span>
-          <input
-            value={s.videoDir ?? ""}
-            placeholder="~/Videos/AnimeJoy"
-            onChange={(e) => set({ videoDir: e.target.value || null })}
-          />
-        </label>
-        <label className="field">
-          <span>Внешний плеер</span>
-          <input
-            value={s.player ?? ""}
-            placeholder="mpv, vlc или ffplay"
-            onChange={(e) => set({ player: e.target.value || null })}
-          />
-        </label>
-        <div
-          className={`check${s.streamByDefault ? " on" : ""}`}
-          onClick={() => set({ streamByDefault: !s.streamByDefault })}
-        >
-          <i />
-          Внешний плеер: потоком, не сохраняя файл
-        </div>
         <div className="buttons">
           <button type="button" className="ghost" onClick={onClose}>
             Отмена

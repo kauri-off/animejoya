@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { api, on, type Entry, type Episode, type Progress, type Settings, type Title } from "./api";
+import {
+  api,
+  media,
+  on,
+  saveAs,
+  type Entry,
+  type Episode,
+  type Progress,
+  type Settings,
+  type Title,
+} from "./api";
 import Library from "./components/Library";
 import TitleScreen, { type Actions } from "./components/TitleScreen";
 import Queue from "./components/Queue";
@@ -63,14 +73,12 @@ export default function App() {
       on.progress((p) => setJobs((j) => ({ ...j, [p.id]: p }))),
       on.done(({ id, file }) => {
         drop(id);
-        toast(`Готово: ${file.split("/").pop()}`);
         setOpen((t) => (t ? markFile(t, file) : t));
       }),
       on.failed(({ id, message }) => {
         drop(id);
         if (!message.includes("отменена")) toast(message, true);
       }),
-      on.playerError((m) => toast(m, true)),
       on.entry((entry) =>
         setLibrary((lib) => lib.map((e) => (e.url === entry.url ? entry : e))),
       ),
@@ -169,56 +177,35 @@ export default function App() {
   }, [sheet, open]);
 
   const actions: Actions = {
-    stream: (ep, quality) => {
+    download: (ep, quality) => {
       const src = ep.sources.find((s) => s.quality === quality) ?? ep.sources[0];
-      if (!src) return;
-      if (settings?.streamByDefault) {
-        api.stream(src.url, ep.title, src.referer).then(
-          (bin) => toast(`Запущен ${bin}`),
-          (e) => toast(String(e), true),
-        );
-      } else {
-        actions.download(ep, quality, true);
-      }
-      if (open) markWatched(ep, true);
+      if (!open || (!ep.file && !src)) return;
+      const q = ep.file ? (ep.file.split("-").pop()?.replace(/\.mp4$/, "") ?? quality) : src!.quality;
+      const name = `${open.entry.title} — ${ep.title} [${q}].mp4`.replace(/[\\/:*?"<>|]/g, "_");
+      saveAs(ep.file ? media.file(ep.file, name) : media.remote(src!, name));
     },
-    download: (ep, quality, autoplay) => {
+    preload: (ep, quality) => {
       const src = ep.sources.find((s) => s.quality === quality) ?? ep.sources[0];
-      if (!src || !open) return;
+      if (!src || !open || ep.file) return;
       api
-        .downloadStart({
+        .preloadStart({
           pageUrl: open.entry.url,
           episode: ep.title,
           quality: src.quality,
           sourceUrl: src.url,
           referer: src.referer,
-          autoplay,
         })
         .then(
           (id) => setJobs((j) => (j[id] ? j : { ...j, [id]: { id, done: 0, total: 0, bytesPerSec: 0 } })),
           (e) => toast(String(e), true),
         );
     },
-    openFile: (ep) => {
+    dropCache: (ep) => {
       if (!ep.file) return;
-      api.playFile(ep.file, ep.title).then(
-        (bin) => toast(`Запущен ${bin}`),
+      api.cacheDrop(ep.file).then(
+        () => setOpen((t) => (t ? dropFile(t, ep.file!) : t)),
         (e) => toast(String(e), true),
       );
-      markWatched(ep, true);
-    },
-    deleteFile: (ep) => {
-      if (!ep.file) return;
-      api.fileDelete(ep.file).then(
-        () => {
-          setOpen((t) => (t ? dropFile(t, ep.file!) : t));
-          toast("Файл удалён");
-        },
-        (e) => toast(String(e), true),
-      );
-    },
-    openDir: () => {
-      if (open) api.openDir(open.dir).catch((e) => toast(String(e), true));
     },
     resolvePlayer: async (playerId) => {
       if (!open) return;
@@ -295,7 +282,7 @@ export default function App() {
             <Plus size={15} /> <span className="wide">Ссылка</span>
           </button>
         )}
-        <Queue jobs={jobs} onCancel={(id) => api.downloadCancel(id)} />
+        <Queue jobs={jobs} onCancel={(id) => api.preloadCancel(id)} />
         <button className="ghost" title="Настройки" onClick={() => setSheet("settings")}>
           <Gear size={15} />
         </button>

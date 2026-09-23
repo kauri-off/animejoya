@@ -7,9 +7,6 @@ export type Fact = { key: string; value: string };
 export type Settings = {
   username: string;
   password: string;
-  videoDir: string | null;
-  player: string | null;
-  streamByDefault: boolean;
 };
 
 export type Entry = {
@@ -29,9 +26,6 @@ export type Entry = {
 const DEFAULTS: Settings = {
   username: "",
   password: "",
-  videoDir: null,
-  player: null,
-  streamByDefault: false,
 };
 
 export function configDir(): string {
@@ -81,9 +75,6 @@ function pickSettings(raw: Partial<Settings>): Settings {
   return {
     username: raw.username ?? DEFAULTS.username,
     password: raw.password ?? DEFAULTS.password,
-    videoDir: raw.videoDir ?? DEFAULTS.videoDir,
-    player: raw.player ?? DEFAULTS.player,
-    streamByDefault: raw.streamByDefault ?? DEFAULTS.streamByDefault,
   };
 }
 
@@ -129,13 +120,6 @@ export function loadLibrary(): Entry[] {
 
 export function saveLibrary(items: Entry[]): void {
   writeJson(libraryPath(), items);
-}
-
-export function videoDir(s: Settings): string {
-  const env = process.env.ANIMEJOYA_DIR;
-  if (env) return env;
-  if (s.videoDir && s.videoDir.trim()) return s.videoDir;
-  return path.join(os.homedir(), "Videos", "AnimeJoy");
 }
 
 /// `.../5499-o-moem-pererozhdenii-v-sliz-4-sezon.html` -> `5499-o-moem-...`

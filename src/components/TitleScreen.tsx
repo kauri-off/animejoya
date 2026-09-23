@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { media, rank, type Episode, type Progress, type Title } from "../api";
-import { Check, Download, Folder, Next, Play, Prev, Screen, Trash, X } from "../icons";
+import { Check, Download, Next, Play, Prev, Trash, X, Zap } from "../icons";
 
 const Watch = lazy(() => import("./Watch"));
 
@@ -12,11 +12,9 @@ const spring = { type: "spring" as const, stiffness: 420, damping: 34 };
 const LEVELS = ["Озвучка", "Плеер", "Диапазон"];
 
 export type Actions = {
-  stream: (ep: Episode, quality: string) => void;
-  download: (ep: Episode, quality: string, autoplay: boolean) => void;
-  openFile: (ep: Episode) => void;
-  deleteFile: (ep: Episode) => void;
-  openDir: () => void;
+  download: (ep: Episode, quality: string) => void;
+  preload: (ep: Episode, quality: string) => void;
+  dropCache: (ep: Episode) => void;
   resolvePlayer: (playerId: string) => Promise<void>;
   toggleWatched: (ep: Episode) => void;
   markWatched: (ep: Episode) => void;
@@ -59,8 +57,11 @@ export default function TitleScreen({
 
   const playing = watching === null ? null : (episodes[watching] ?? null);
   const playingSource = sourceOf(playing);
-  const playSrc = playing?.file
-    ? media.file(playing.file)
+  // Источник фиксируем на старте серии, иначе догрузка кэша перезапустит плеер.
+  const cachedAtStart = useMemo(() => playing?.file ?? null, [watching, playerId]);
+  const playFile = cachedAtStart !== null && playing?.file ? playing.file : null;
+  const playSrc = playFile
+    ? media.file(playFile)
     : playingSource
       ? media.remote(playingSource)
       : null;
@@ -87,7 +88,6 @@ export default function TitleScreen({
     </div>
   );
 
-  const external = (ep: Episode) => (ep.file ? actions.openFile(ep) : actions.stream(ep, active));
   const jobFor = (ep: Episode) => running.find((j) => j.id.startsWith(`${data.dir}/${ep.tag}-`)) ?? null;
 
   const running = useMemo(() => Object.values(jobs), [jobs]);
@@ -129,6 +129,13 @@ export default function TitleScreen({
   useEffect(() => {
     if (watching !== null) theater.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [watching]);
+
+  // Пока смотрим серию, следующая тихо ложится во временный кэш.
+  useEffect(() => {
+    if (watching === null) return;
+    const next = episodes[watching + 1];
+    if (next && !next.file && next.sources.length > 0 && !jobFor(next)) actions.preload(next, active);
+  }, [watching, playerId]);
 
   // Esc сначала закрывает плеер, а уже потом — карточку тайтла.
   useEffect(() => {
@@ -191,7 +198,7 @@ export default function TitleScreen({
                 </button>
                 <div className="label">
                   {playing.title}
-                  <small>{path.join(" · ") || (playing.file ? "с диска" : "поток")}</small>
+                  <small>{path.join(" · ") || (playFile ? "из кэша" : "поток")}</small>
                 </div>
                 <button
                   className="act quiet"
@@ -204,9 +211,9 @@ export default function TitleScreen({
               </div>
 
               <div className="tools">
-                {!playing.file && qualitySeg}
-                <button className="act quiet" title="Во внешнем плеере" onClick={() => external(playing)}>
-                  <Screen size={15} />
+                {!playFile && qualitySeg}
+                <button className="act quiet" title="Скачать" onClick={() => actions.download(playing, active)}>
+                  <Download size={14} />
                 </button>
                 <button className="act quiet" title="Закрыть плеер" onClick={() => setWatching(null)}>
                   <X size={15} />
@@ -346,24 +353,25 @@ export default function TitleScreen({
               <button className="act accent" onClick={() => watch(pick)}>
                 <Play size={13} /> Смотреть
               </button>
-              <button className="act quiet" title="Во внешнем плеере" onClick={() => external(episode)}>
-                <Screen size={15} />
+              <button className="act quiet" title="Скачать" onClick={() => actions.download(episode, active)}>
+                <Download size={14} />
               </button>
               {episode.file ? (
                 <button
                   className="act danger quiet"
-                  title="Удалить файл"
-                  onClick={() => actions.deleteFile(episode)}
+                  title="Убрать из кэша"
+                  onClick={() => actions.dropCache(episode)}
                 >
                   <Trash size={14} />
                 </button>
               ) : (
                 <button
                   className="act quiet"
-                  title="Скачать"
-                  onClick={() => actions.download(episode, active, false)}
+                  title="Предзагрузить"
+                  disabled={jobFor(episode) !== null}
+                  onClick={() => actions.preload(episode, active)}
                 >
-                  <Download size={14} />
+                  <Zap size={14} />
                 </button>
               )}
               <button
@@ -372,9 +380,6 @@ export default function TitleScreen({
                 onClick={() => actions.toggleWatched(episode)}
               >
                 <Check size={14} />
-              </button>
-              <button className="act quiet" title="Папка тайтла" onClick={actions.openDir}>
-                <Folder size={14} />
               </button>
             </div>
           </motion.div>

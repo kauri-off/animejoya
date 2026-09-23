@@ -1,0 +1,19 @@
+services:
+  animejoya:
+    image: ghcr.io/kauri-off/animejoya:latest
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      ANIMEJOYA_HOSTS: ${ANIMEJOYA_HOSTS:-anime.example.com}
+      ANIMEJOYA_CACHE_HOURS: ${ANIMEJOYA_CACHE_HOURS:-12}
+      ANIMEJOYA_CACHE_GB: ${ANIMEJOYA_CACHE_GB:-10}
+    ports:
+      - "127.0.0.1:7788:7788"
+    volumes:
+      - data:/data
+      - cache:/cache
+
+volumes:
+  data:
+  cache:

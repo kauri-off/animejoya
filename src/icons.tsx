@@ -51,11 +51,6 @@ export const Trash = ({ size }: P) => (
     <path d="M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13" />
   </svg>
 );
-export const Folder = ({ size }: P) => (
-  <svg {...base(size)}>
-    <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4L11 8.5h8.5A1.5 1.5 0 0 1 21 10v7.5A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z" />
-  </svg>
-);
 export const Refresh = ({ size }: P) => (
   <svg {...base(size)}>
     <path d="M20 11a8 8 0 1 0-.6 4M20 5v6h-6" />
@@ -78,9 +73,8 @@ export const Next = ({ size }: P) => (
     <path d="m6 6 9 6-9 6zM18 6v12" />
   </svg>
 );
-export const Screen = ({ size }: P) => (
+export const Zap = ({ size }: P) => (
   <svg {...base(size)}>
-    <rect x="3" y="4.5" width="18" height="12" rx="2" />
-    <path d="M8 20h8M12 16.5V20" />
+    <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />
   </svg>
 );
