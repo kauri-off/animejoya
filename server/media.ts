@@ -1,18 +1,13 @@
-import http from "node:http";
-import fs from "node:fs";
-import fsp from "node:fs/promises";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { UA } from "./site.ts";
 
 /// `<video>` с чужой страницы тоже дойдёт сюда, поэтому пускаем только свои запросы.
-export function sameSite(req: http.IncomingMessage): boolean {
-  const site = req.headers["sec-fetch-site"];
-  return site === undefined || site === "same-origin" || site === "none";
+export function sameSite(req: Request): boolean {
+  const site = req.headers.get("sec-fetch-site");
+  return site === null || site === "same-origin" || site === "none";
 }
 
-function parseRange(header: string | undefined, size: number): [number, number] | null {
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header ?? "");
+function parseRange(header: string, size: number): [number, number] | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header);
   if (m === null) return null;
   const [, a = "", b = ""] = m;
   if (a === "" && b === "") return null;
@@ -31,75 +26,48 @@ function attachment(name: string): Record<string, string> {
   };
 }
 
-/// Отдаёт серию из кэша; путь уже проверен вызывающим.
-export async function serveFile(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  abs: string,
-  name: string,
-): Promise<void> {
-  let size: number;
-  try {
-    size = (await fsp.stat(abs)).size;
-  } catch {
-    res.writeHead(404).end();
-    return;
-  }
+/// Отдаёт серию из кэша через sendfile; путь уже проверен вызывающим.
+export async function serveFile(req: Request, abs: string, name: string): Promise<Response> {
+  const file = Bun.file(abs);
+  if (!(await file.exists())) return new Response(null, { status: 404 });
+  const size = file.size;
 
-  const head = {
+  const head: Record<string, string> = {
     "Content-Type": "video/mp4",
     "Accept-Ranges": "bytes",
     "Cache-Control": "no-store",
     ...attachment(name),
   };
-  const range = req.headers.range === undefined ? null : parseRange(req.headers.range, size);
-  if (req.headers.range !== undefined && range === null) {
-    res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
-    return;
+  const header = req.headers.get("range");
+  const range = header === null ? null : parseRange(header, size);
+  if (header !== null && range === null) {
+    return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
   }
   const [start, end] = range ?? [0, size - 1];
-  res.writeHead(range ? 206 : 200, {
-    ...head,
-    "Content-Length": end - start + 1,
-    ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
-  });
-  if (req.method === "HEAD" || size === 0) {
-    res.end();
-    return;
-  }
-  await pipeline(fs.createReadStream(abs, { start, end }), res).catch(() => {});
+  if (range !== null) head["Content-Range"] = `bytes ${start}-${end}/${size}`;
+  // На HEAD Bun сам отбросит тело, оставив Content-Length.
+  return new Response(file.slice(start, end + 1), { status: range ? 206 : 200, headers: head });
 }
 
 const PASS = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
 
 /// Поток с CDN через себя: браузер не умеет подставить нужный Referer, а мы умеем.
-export async function proxy(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  url: string,
-  referer: string,
-  name: string,
-): Promise<void> {
-  if (!/^https?:\/\//.test(url)) {
-    res.writeHead(400).end();
-    return;
-  }
-  const ctrl = new AbortController();
-  res.on("close", () => ctrl.abort());
+export async function proxy(req: Request, url: string, referer: string, name: string): Promise<Response> {
+  if (!/^https?:\/\//.test(url)) return new Response(null, { status: 400 });
 
   const headers: Record<string, string> = {
     "User-Agent": UA,
     Accept: "video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5",
   };
   if (referer !== "") headers.Referer = referer;
-  if (req.headers.range !== undefined) headers.Range = req.headers.range;
+  const range = req.headers.get("range");
+  if (range !== null) headers.Range = range;
 
   let up: Response;
   try {
-    up = await fetch(url, { headers, signal: ctrl.signal });
+    up = await fetch(url, { headers, signal: req.signal });
   } catch {
-    if (!res.headersSent) res.writeHead(502).end();
-    return;
+    return new Response(null, { status: 502 });
   }
 
   const out: Record<string, string> = { "Cache-Control": "no-store", ...(up.ok ? attachment(name) : {}) };
@@ -108,11 +76,10 @@ export async function proxy(
     if (v !== null) out[h] = v;
   }
   if (up.ok && !out["content-type"]?.startsWith("video/")) out["content-type"] = "video/mp4";
-  res.writeHead(up.status, out);
 
-  if (up.body === null || req.method === "HEAD") {
-    res.end();
-    return;
+  if (req.method === "HEAD") {
+    await up.body?.cancel();
+    return new Response(null, { status: up.status, headers: out });
   }
-  await pipeline(Readable.fromWeb(up.body as never), res).catch(() => {});
+  return new Response(up.body, { status: up.status, headers: out });
 }

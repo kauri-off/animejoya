@@ -1,4 +1,3 @@
-import http from "node:http";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -41,11 +40,11 @@ const library: Entry[] = store.loadLibrary();
 const cancels = new Map<string, AbortController>();
 const playlists = new Map<string, Playlist>();
 
-const clients = new Set<http.ServerResponse>();
+const clients = new Set<ReadableStreamDefaultController<string>>();
 
 function emit(event: string, payload: unknown): void {
   const line = `data: ${JSON.stringify({ event, payload })}\n\n`;
-  for (const c of clients) c.write(line);
+  for (const c of clients) c.enqueue(line);
 }
 
 /// Открывает страницу тайтла, при необходимости логинясь один раз за сессию.
@@ -317,11 +316,11 @@ const hosts = new Set([
 ]);
 
 /// Сверяем Host и Origin: иначе сторонняя страница или DNS rebinding дотянутся до API.
-function allowed(req: http.IncomingMessage): boolean {
-  const host = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+function allowed(req: Request): boolean {
+  const host = (req.headers.get("host") ?? "").replace(/:\d+$/, "").toLowerCase();
   if (!hosts.has(host)) return false;
-  const origin = req.headers.origin;
-  if (origin === undefined) return true;
+  const origin = req.headers.get("origin");
+  if (origin === null) return true;
   try {
     return hosts.has(new URL(origin).hostname.toLowerCase());
   } catch {
@@ -345,123 +344,102 @@ const MIME: Record<string, string> = {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "..", "dist");
 
-function send(res: http.ServerResponse, name: string, body: Buffer): void {
-  res.writeHead(200, {
-    "Content-Type": MIME[path.extname(name)] ?? "application/octet-stream",
-    "Content-Length": body.length,
-    "Cache-Control": "no-store",
+function send(name: string, body: Uint8Array<ArrayBuffer> | Blob): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": MIME[path.extname(name)] ?? "application/octet-stream",
+      "Cache-Control": "no-store",
+    },
   });
-  res.end(body);
 }
 
-async function serveStatic(res: http.ServerResponse, urlPath: string): Promise<void> {
-  const clean = (urlPath.split("?")[0] ?? "/").replace(/^\/+/, "");
+/// base64 раскодируем один раз, а не на каждый запрос.
+const decoded = new Map<string, Uint8Array<ArrayBuffer>>();
+const embedded = (key: string): Uint8Array<ArrayBuffer> => {
+  let buf = decoded.get(key);
+  if (buf === undefined) {
+    buf = Buffer.from(assets[key]!, "base64");
+    decoded.set(key, buf);
+  }
+  return buf;
+};
+
+async function serveStatic(urlPath: string): Promise<Response> {
+  const clean = urlPath.replace(/^\/+/, "");
   const key = clean === "" ? "index.html" : clean;
 
-  const embedded = assets[key] ?? assets["index.html"];
-  if (embedded !== undefined && Object.keys(assets).length > 0) {
-    send(res, assets[key] !== undefined ? key : "index.html", Buffer.from(embedded, "base64"));
-    return;
+  if (Object.keys(assets).length > 0) {
+    const name = assets[key] !== undefined ? key : "index.html";
+    return send(name, embedded(name));
   }
 
   const file = path.resolve(distDir, key);
-  if (!file.startsWith(distDir)) {
-    res.writeHead(403).end();
-    return;
-  }
-  try {
-    send(res, key, await fsp.readFile(file));
-  } catch {
-    try {
-      send(res, "index.html", await fsp.readFile(path.join(distDir, "index.html")));
-    } catch {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("dist не собран — выполните npm run build");
-    }
-  }
+  if (!file.startsWith(distDir)) return new Response(null, { status: 403 });
+  if (await Bun.file(file).exists()) return send(key, Bun.file(file));
+  const index = Bun.file(path.join(distDir, "index.html"));
+  if (await index.exists()) return send("index.html", index);
+  return new Response("dist не собран — выполните npm run build", {
+    status: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }
 
-function sse(req: http.IncomingMessage, res: http.ServerResponse): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-store",
-    Connection: "keep-alive",
-  });
-  res.write(": ok\n\n");
-  clients.add(res);
-  const beat = setInterval(() => res.write(": beat\n\n"), 25_000);
-  req.on("close", () => {
+function sse(req: Request): Response {
+  let ctrl: ReadableStreamDefaultController<string>;
+  let beat: ReturnType<typeof setInterval>;
+  const drop = (): void => {
     clearInterval(beat);
-    clients.delete(res);
+    clients.delete(ctrl);
+  };
+  const body = new ReadableStream<string>({
+    start(c) {
+      ctrl = c;
+      c.enqueue(": ok\n\n");
+      clients.add(c);
+      beat = setInterval(() => c.enqueue(": beat\n\n"), 25_000);
+    },
+    cancel: drop,
+  });
+  req.signal.addEventListener("abort", drop);
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store",
+      Connection: "keep-alive",
+    },
   });
 }
 
-async function readBody(req: http.IncomingMessage): Promise<Args> {
-  const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
-  if (chunks.length === 0) return {} as Args;
+async function readBody(req: Request): Promise<Args> {
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Args;
+    return ((await req.json()) ?? {}) as Args;
   } catch {
     return {} as Args;
   }
 }
 
-async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, name: string): Promise<void> {
+async function handleApi(req: Request, name: string): Promise<Response> {
   const fn = handlers[name];
-  const reply = (code: number, body: unknown): void => {
-    const text = JSON.stringify(body);
-    res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(text);
-  };
-  if (fn === undefined) {
-    reply(404, { ok: false, error: `неизвестная команда ${name}` });
-    return;
-  }
+  if (fn === undefined) return Response.json({ ok: false, error: `неизвестная команда ${name}` }, { status: 404 });
   try {
-    reply(200, { ok: true, data: (await fn(await readBody(req))) ?? null });
+    return Response.json({ ok: true, data: (await fn(await readBody(req))) ?? null });
   } catch (e) {
-    reply(200, { ok: false, error: msg(e) });
+    return Response.json({ ok: false, error: msg(e) });
   }
 }
 
-async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, raw: string): Promise<void> {
-  if (!media.sameSite(req)) {
-    res.writeHead(403).end();
-    return;
-  }
-  const u = new URL(raw, "http://local");
+async function serveMedia(req: Request, u: URL): Promise<Response> {
+  if (!media.sameSite(req)) return new Response(null, { status: 403 });
   const q = (k: string): string => u.searchParams.get(k) ?? "";
   if (u.pathname === "/media/file") {
     const abs = cache.inside(q("path"));
-    if (abs === null) {
-      res.writeHead(403).end();
-      return;
-    }
+    if (abs === null) return new Response(null, { status: 403 });
     cache.touch(abs);
-    await media.serveFile(req, res, abs, q("name"));
-  } else if (u.pathname === "/media/remote") {
-    await media.proxy(req, res, q("url"), q("referer"), q("name"));
-  } else {
-    res.writeHead(404).end();
+    return media.serveFile(req, abs, q("name"));
   }
+  if (u.pathname === "/media/remote") return media.proxy(req, q("url"), q("referer"), q("name"));
+  return new Response(null, { status: 404 });
 }
-
-const server = http.createServer((req, res) => {
-  void (async () => {
-    if (!allowed(req)) {
-      res.writeHead(403).end();
-      return;
-    }
-    const url = req.url ?? "/";
-    if (url.startsWith("/media/")) await serveMedia(req, res, url);
-    else if (url === "/api/events") sse(req, res);
-    else if (url.startsWith("/api/")) await handleApi(req, res, url.slice("/api/".length));
-    else await serveStatic(res, url);
-  })().catch(() => {
-    if (!res.headersSent) res.writeHead(500).end();
-  });
-});
 
 function openBrowser(url: string): void {
   const win = process.platform === "win32";
@@ -480,8 +458,25 @@ setInterval(sweep, 1_800_000).unref();
 // В контейнере сервер — PID 1, и без явного обработчика SIGTERM игнорируется.
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => process.exit(0));
 
-server.listen(PORT, HOST, () => {
-  const url = `http://${HOST.includes(":") ? `[${HOST}]` : HOST}:${PORT}/`;
-  console.log(`AnimeJoy: ${url}`);
-  if (process.env.ANIMEJOYA_NO_OPEN === undefined && !process.argv.includes("--no-open")) openBrowser(url);
+// sendfile для кэша и прямая передача потока с CDN — node:http на слабом CPU упирался в 100%.
+const server = Bun.serve({
+  hostname: HOST,
+  port: PORT,
+  idleTimeout: 60,
+  async fetch(req, srv) {
+    if (!allowed(req)) return new Response(null, { status: 403 });
+    const u = new URL(req.url);
+    if (u.pathname.startsWith("/media/") || u.pathname === "/api/events") {
+      // Плеер на паузе и SSE подолгу молчат — не рвём их по простою.
+      srv.timeout(req, 0);
+      return u.pathname === "/api/events" ? sse(req) : serveMedia(req, u);
+    }
+    if (u.pathname.startsWith("/api/")) return handleApi(req, u.pathname.slice("/api/".length));
+    return serveStatic(u.pathname);
+  },
+  error: () => new Response(null, { status: 500 }),
 });
+
+const url = `http://${HOST.includes(":") ? `[${HOST}]` : HOST}:${server.port}/`;
+console.log(`AnimeJoy: ${url}`);
+if (process.env.ANIMEJOYA_NO_OPEN === undefined && !process.argv.includes("--no-open")) openBrowser(url);

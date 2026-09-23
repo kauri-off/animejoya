@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { once } from "node:events";
 import { UA } from "./site.ts";
 
 export type Progress = { id: string; done: number; total: number; bytesPerSec: number };
@@ -106,7 +105,9 @@ export async function fetchFile(
   const start = resume ? done : 0;
   const total = known ?? start + Number(res.headers.get("content-length") ?? 0);
 
-  const out = fs.createWriteStream(part, { flags: resume ? "a" : "w" });
+  // FileSink Bun'а вдвое дешевле по CPU, чем node-стрим, — на слабом сервере это заметно.
+  const fd = fs.openSync(part, resume ? "a" : "w");
+  const out = Bun.file(fd).writer({ highWaterMark: 1 << 20 });
   let written = start;
   let tick = Date.now();
   let tickBytes = written;
@@ -114,7 +115,7 @@ export async function fetchFile(
 
   try {
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-      if (!out.write(chunk)) await once(out, "drain");
+      out.write(chunk);
       written += chunk.length;
       const elapsed = Date.now() - tick;
       if (elapsed >= 250) {
@@ -124,13 +125,12 @@ export async function fetchFile(
       }
     }
   } catch (e) {
-    out.destroy();
     if (signal.aborted) throw new Error("загрузка отменена");
     throw new Error(`обрыв загрузки: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    await out.end();
+    fs.closeSync(fd);
   }
-
-  out.end();
-  await once(out, "finish");
 
   if (total > 0 && written < total) {
     throw new Error(`скачано ${written} из ${total} байт — запустите ещё раз, докачается`);
