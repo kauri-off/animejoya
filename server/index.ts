@@ -23,6 +23,10 @@ import type { Episode, Meta, Source } from "./site.ts";
 type EpisodeView = { title: string; tag: string; sources: Source[]; file: string | null };
 type PlayerView = { id: string; path: string[]; episodes: EpisodeView[]; resolvable: boolean };
 type TitleView = { entry: Entry; players: PlayerView[]; external: string[]; dir: string };
+type CacheFile = { path: string; tag: string; quality: string; size: number; mtime: number; partial: boolean; busy: boolean };
+type CacheTitle = { slug: string; url: string | null; title: string; poster: string; size: number; files: CacheFile[] };
+type CacheView = { root: string; ttl: number; limit: number; size: number; titles: CacheTitle[] };
+type Job = { ctrl: AbortController; task: Promise<void> };
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -37,7 +41,7 @@ function isTitleUrl(url: string): boolean {
 
 const site = new Site();
 const library: Entry[] = store.loadLibrary();
-const cancels = new Map<string, AbortController>();
+const jobs = new Map<string, Job>();
 const playlists = new Map<string, Playlist>();
 
 const clients = new Set<ReadableStreamDefaultController<string>>();
@@ -100,7 +104,60 @@ function episodeView(e: Episode, dir: string): EpisodeView {
 const destPath = (pageUrl: string, epTitle: string, quality: string): string =>
   path.join(cache.dirOf(store.slug(pageUrl)), `${store.epTag(epTitle)}-${quality}.mp4`);
 
-const sweep = (): void => void cache.sweep(new Set(cancels.keys())).catch(() => {});
+const dropped = (files: string[]): void => {
+  const list = [...new Set(files.map((f) => f.replace(/\.part$/, "")))];
+  if (list.length > 0) emit("cache:dropped", list);
+};
+
+const sweep = async (): Promise<void> => {
+  try {
+    dropped(await cache.sweep(new Set(jobs.keys())));
+  } catch {}
+};
+
+/// Удаление важнее докачки: гасим загрузку и ждём, пока она отпустит файл.
+async function stop(match: (dest: string) => boolean): Promise<void> {
+  const hit = [...jobs].filter(([dest]) => match(dest)).map(([, j]) => j);
+  for (const j of hit) j.ctrl.abort();
+  await Promise.all(hit.map((j) => j.task));
+}
+
+function cacheView(items: cache.Item[]): CacheView {
+  const bySlug = new Map(library.map((e) => [store.slug(e.url), e]));
+  const groups = new Map<string, CacheTitle>();
+  for (const it of items) {
+    const slug = path.relative(cache.root, path.dirname(it.file));
+    const name = path.basename(it.file);
+    const m = /^(.*)-([^-]*)\.mp4(\.part)?$/.exec(name);
+    const partial = name.endsWith(".part");
+    let g = groups.get(slug);
+    if (g === undefined) {
+      const e = bySlug.get(slug);
+      g = { slug, url: e?.url ?? null, title: e?.title || slug, poster: e?.poster ?? "", size: 0, files: [] };
+      groups.set(slug, g);
+    }
+    g.size += it.size;
+    g.files.push({
+      path: it.file,
+      tag: m?.[1] ?? name,
+      quality: m?.[2] ?? "",
+      size: it.size,
+      mtime: it.mtime,
+      partial,
+      busy: jobs.has(it.file.replace(/\.part$/, "")),
+    });
+  }
+  const latest = (g: CacheTitle) => Math.max(...g.files.map((f) => f.mtime));
+  const titles = [...groups.values()].sort((a, b) => latest(b) - latest(a));
+  for (const g of titles) g.files.sort((a, b) => a.tag.localeCompare(b.tag, "ru", { numeric: true }));
+  return {
+    root: cache.root,
+    ttl: cache.TTL,
+    limit: cache.LIMIT,
+    size: titles.reduce((s, g) => s + g.size, 0),
+    titles,
+  };
+}
 
 /// Не больше четырёх запросов разом, чтобы не ловить лимиты чужого сайта.
 async function mapLimit<T, R>(
@@ -285,37 +342,65 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
   preload_start: async ({ pageUrl, episode, quality, sourceUrl, referer }) => {
     const dest = destPath(pageUrl as string, episode as string, quality as string);
     const id = dest;
-    if (cancels.has(id)) return id;
+    if (jobs.has(id)) return id;
 
     const ctrl = new AbortController();
-    cancels.set(id, ctrl);
-
-    void (async () => {
+    const task = (async () => {
       try {
         const file = await fetchFile(sourceUrl as string, referer as string, dest, ctrl.signal, (done, total, bytesPerSec) => {
           emit("preload:progress", { id, done, total, bytesPerSec } satisfies Progress);
         });
-        cancels.delete(id);
+        jobs.delete(id);
         emit("preload:done", { id, file });
-        sweep();
+        void sweep();
       } catch (e) {
-        cancels.delete(id);
+        jobs.delete(id);
         emit("preload:failed", { id, message: msg(e) });
       }
     })();
+    jobs.set(id, { ctrl, task });
 
     return id;
   },
 
   preload_cancel: async ({ id }) => {
-    cancels.get(id as string)?.abort();
-    cancels.delete(id as string);
+    jobs.get(id as string)?.ctrl.abort();
+    jobs.delete(id as string);
   },
 
+  cache_list: async () => cacheView(await cache.list()),
+
+  /// Серию удаляем вместе с недокачанным огрызком.
   cache_drop: async ({ path: file }) => {
-    const abs = cache.inside(file as string);
+    const abs = cache.inside(String(file).replace(/\.part$/, ""));
     if (abs === null) throw new Error("файл вне кэша");
+    await stop((dest) => dest === abs);
     await fsp.rm(abs, { force: true });
+    await fsp.rm(`${abs}.part`, { force: true });
+    await cache.prune();
+    dropped([abs]);
+  },
+
+  cache_drop_title: async ({ slug }) => {
+    const dir = cache.titleDir(String(slug));
+    if (dir === null) throw new Error("папка вне кэша");
+    await stop((dest) => dest.startsWith(dir + path.sep));
+    const files = (await cache.list(dir)).map((it) => it.file);
+    await fsp.rm(dir, { recursive: true, force: true });
+    dropped(files);
+  },
+
+  cache_clear: async () => {
+    await stop(() => true);
+    const files = (await cache.list()).map((it) => it.file);
+    const names = await fsp.readdir(cache.root).catch(() => [] as string[]);
+    await Promise.all(names.map((n) => fsp.rm(path.join(cache.root, n), { recursive: true, force: true })));
+    dropped(files);
+  },
+
+  cache_sweep: async () => {
+    await sweep();
+    return cacheView(await cache.list());
   },
 };
 
@@ -468,7 +553,7 @@ function openBrowser(url: string): void {
   } catch {}
 }
 
-sweep();
+void sweep();
 setInterval(sweep, 1_800_000).unref();
 
 // В контейнере сервер — PID 1, и без явного обработчика SIGTERM игнорируется.

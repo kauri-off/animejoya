@@ -95,3 +95,9 @@ export const Keyboard = ({ size }: P) => (
     <path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14h8" />
   </svg>
 );
+export const Drive = ({ size }: P) => (
+  <svg {...base(size)}>
+    <rect x="3" y="13" width="18" height="7" rx="2" />
+    <path d="M3 15 6 5h12l3 10M7 16.5h.01M11 16.5h.01" />
+  </svg>
+);

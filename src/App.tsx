@@ -14,8 +14,9 @@ import {
 import Library from "./components/Library";
 import TitleScreen, { type Actions } from "./components/TitleScreen";
 import Queue from "./components/Queue";
+import Cache from "./components/Cache";
 import { AddSheet, HelpSheet, SettingsSheet } from "./components/Sheets";
-import { Back, ExternalLink, Gear, Keyboard, Plus, Refresh } from "./icons";
+import { Back, Drive, ExternalLink, Gear, Keyboard, Plus, Refresh } from "./icons";
 
 type Action = { label: string; run: () => void };
 type Toast = { id: number; text: string; bad?: boolean; action?: Action };
@@ -57,6 +58,9 @@ export default function App() {
   const [addError, setAddError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [syncing, setSyncing] = useState(0);
+  const [cacheOpen, setCacheOpen] = useState(false);
+  const cacheRef = useRef(cacheOpen);
+  cacheRef.current = cacheOpen;
   const seq = useRef(0);
   const libRef = useRef(library);
   libRef.current = library;
@@ -110,6 +114,7 @@ export default function App() {
         setLibrary((lib) => lib.map((e) => (e.url === entry.url ? entry : e))),
       ),
       on.syncing(setSyncing),
+      on.dropped((files) => setOpen((t) => (t ? files.reduce(dropFile, t) : t))),
     ];
     return () => {
       uns.forEach((u) => u.then((f) => f()));
@@ -124,13 +129,20 @@ export default function App() {
         const data = await api.titleOpen(url);
         setOpen(data);
         if (push && history.state?.title !== data.entry.url) {
-          history.pushState({ title: data.entry.url }, "", `#${encodeURIComponent(data.entry.url)}`);
+          history.pushState(
+            { title: data.entry.url, cache: cacheRef.current },
+            "",
+            `#${encodeURIComponent(data.entry.url)}`,
+          );
         }
         setLibrary(await api.libraryGet());
       } catch (e) {
         fail(e);
         setOpen(null);
-        if (history.state?.title) history.replaceState(null, "", location.pathname);
+        if (history.state?.title) {
+          history.replaceState(null, "", location.pathname);
+          setCacheOpen(false);
+        }
       } finally {
         setLoading(false);
       }
@@ -139,18 +151,33 @@ export default function App() {
   );
 
   const close = useCallback(() => {
-    if (history.state?.title) history.back();
-    else setOpen(null);
+    if (history.state?.title || history.state?.cache) history.back();
+    else {
+      setOpen(null);
+      setCacheOpen(false);
+    }
+  }, []);
+
+  const showCache = useCallback(() => {
+    if (!history.state?.cache || history.state?.title) history.pushState({ cache: true }, "", "#cache");
+    setOpen(null);
+    setCacheOpen(true);
   }, []);
 
   useEffect(() => {
-    const initial = titleFromHash();
-    if (initial) {
-      history.replaceState(null, "", location.pathname);
-      void load(initial);
+    if (location.hash === "#cache") {
+      history.replaceState({ cache: true }, "", "#cache");
+      setCacheOpen(true);
+    } else {
+      const initial = titleFromHash();
+      if (initial) {
+        history.replaceState(null, "", location.pathname);
+        void load(initial);
+      }
     }
     const onPop = () => {
       const url: string | undefined = history.state?.title;
+      setCacheOpen(Boolean(history.state?.cache) || location.hash === "#cache");
       if (!url) setOpen(null);
       else if (url !== openUrl.current) void load(url, false);
     };
@@ -218,7 +245,7 @@ export default function App() {
   // Ctrl+V в любом месте библиотеки = добавить тайтл по ссылке из буфера.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      if (sheet || open) return;
+      if (sheet || open || cacheOpen) return;
       const text = e.clipboardData?.getData("text")?.trim() ?? "";
       if (!/^https?:\/\/\S+\/\d+-[^/]*\.html?$/.test(text)) return;
       setDraft(text);
@@ -233,7 +260,7 @@ export default function App() {
       }
       if (e.key !== "Escape" || document.fullscreenElement) return;
       if (sheet) setSheet(null);
-      else if (open) close();
+      else if (open || cacheOpen) close();
     };
     window.addEventListener("paste", onPaste);
     window.addEventListener("keydown", onKey);
@@ -241,7 +268,7 @@ export default function App() {
       window.removeEventListener("paste", onPaste);
       window.removeEventListener("keydown", onKey);
     };
-  }, [sheet, open, close]);
+  }, [sheet, open, cacheOpen, close]);
 
   const actions: Actions = {
     download: (ep, quality) => {
@@ -314,9 +341,9 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        {open ? (
-          <button className="ghost" title="Библиотека (Esc)" onClick={close}>
-            <Back size={15} /> <span className="wide">Библиотека</span>
+        {open || cacheOpen ? (
+          <button className="ghost" title={`${open && cacheOpen ? "Кэш" : "Библиотека"} (Esc)`} onClick={close}>
+            <Back size={15} /> <span className="wide">{open && cacheOpen ? "Кэш" : "Библиотека"}</span>
           </button>
         ) : (
           <div className="brand">
@@ -343,17 +370,22 @@ export default function App() {
             </button>
           </>
         )}
-        {!open && syncing > 0 && (
+        {!open && !cacheOpen && syncing > 0 && (
           <div className="sync">
             <span className="spin" /> <span className="wide">Обложки:</span> {syncing}
           </div>
         )}
-        {!open && (
+        {!open && !cacheOpen && (
           <button className="primary" title="Добавить по ссылке" onClick={openAdd}>
             <Plus size={15} /> <span className="wide">Ссылка</span>
           </button>
         )}
         <Queue jobs={jobs} onCancel={(id) => api.preloadCancel(id)} />
+        {!(cacheOpen && !open) && (
+          <button className="ghost" title="Кэш" onClick={showCache}>
+            <Drive size={16} />
+          </button>
+        )}
         <button className="ghost desk" title="Горячие клавиши (?)" onClick={() => setSheet("help")}>
           <Keyboard size={16} />
         </button>
@@ -371,6 +403,10 @@ export default function App() {
           ) : open ? (
             <motion.div key={open.entry.url} {...page}>
               <TitleScreen data={open} jobs={jobs} actions={actions} />
+            </motion.div>
+          ) : cacheOpen ? (
+            <motion.div key="cache" {...page} style={{ height: "100%" }}>
+              <Cache jobs={jobs} onOpen={(url) => void load(url)} toast={toast} />
             </motion.div>
           ) : (
             <motion.div key="lib" {...page} style={{ height: "100%" }}>

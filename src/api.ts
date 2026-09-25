@@ -25,6 +25,18 @@ export type Settings = {
   password: string;
 };
 
+export type CacheFile = {
+  path: string;
+  tag: string;
+  quality: string;
+  size: number;
+  mtime: number;
+  partial: boolean;
+  busy: boolean;
+};
+export type CacheTitle = { slug: string; url: string | null; title: string; poster: string; size: number; files: CacheFile[] };
+export type CacheInfo = { root: string; ttl: number; limit: number; size: number; titles: CacheTitle[] };
+
 export type Progress = { id: string; done: number; total: number; bytesPerSec: number };
 
 type Reply = { ok: boolean; data?: unknown; error?: string };
@@ -75,7 +87,11 @@ export const api = {
     referer: string;
   }) => call<string>("preload_start", a),
   preloadCancel: (id: string) => call<void>("preload_cancel", { id }),
+  cacheList: () => call<CacheInfo>("cache_list"),
   cacheDrop: (path: string) => call<void>("cache_drop", { path }),
+  cacheDropTitle: (slug: string) => call<void>("cache_drop_title", { slug }),
+  cacheClear: () => call<void>("cache_clear"),
+  cacheSweep: () => call<CacheInfo>("cache_sweep"),
 };
 
 type Handler = (payload: never) => void;
@@ -116,6 +132,7 @@ export const on = {
     listen<{ id: string; message: string }>("preload:failed", f),
   entry: (f: (e: Entry) => void) => listen<Entry>("library:entry", f),
   syncing: (f: (n: number) => void) => listen<number>("library:syncing", f),
+  dropped: (f: (files: string[]) => void) => listen<string[]>("cache:dropped", f),
 };
 
 export function bytes(n: number): string {

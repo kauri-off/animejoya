@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 const HOUR = 3_600_000;
-const TTL = Number(process.env.ANIMEJOYA_CACHE_HOURS ?? 12) * HOUR;
-const LIMIT = Number(process.env.ANIMEJOYA_CACHE_GB ?? 10) * 1024 ** 3;
+export const TTL = Number(process.env.ANIMEJOYA_CACHE_HOURS ?? 12) * HOUR;
+export const LIMIT = Number(process.env.ANIMEJOYA_CACHE_GB ?? 10) * 1024 ** 3;
 
 export const root = path.resolve(process.env.ANIMEJOYA_CACHE ?? path.join(os.tmpdir(), "animejoya"));
 
@@ -22,7 +22,7 @@ export function touch(file: string): void {
   fsp.utimes(file, t, t).catch(() => {});
 }
 
-type Item = { file: string; size: number; mtime: number };
+export type Item = { file: string; size: number; mtime: number };
 
 async function walk(dir: string, out: Item[]): Promise<void> {
   let names: fs.Dirent[];
@@ -44,22 +44,50 @@ async function walk(dir: string, out: Item[]): Promise<void> {
   }
 }
 
-/// Выкидывает протухшее, затем самое старое, пока кэш не влезет в лимит.
-export async function sweep(busy: Set<string>): Promise<void> {
-  const items: Item[] = [];
-  await walk(root, items);
+export async function list(dir = root): Promise<Item[]> {
+  const out: Item[] = [];
+  await walk(dir, out);
+  return out;
+}
+
+/// Папка тайтла прямо в корне кэша, без выхода наружу через `..`.
+export function titleDir(slug: string): string | null {
+  const abs = path.resolve(root, slug);
+  return slug !== "" && path.dirname(abs) === root ? abs : null;
+}
+
+/// Убирает опустевшие папки тайтлов.
+export async function prune(): Promise<void> {
+  let names: string[];
+  try {
+    names = await fsp.readdir(root);
+  } catch {
+    return;
+  }
+  await Promise.all(names.map((n) => fsp.rmdir(path.join(root, n)).catch(() => {})));
+}
+
+/// Выкидывает протухшее, затем самое старое, пока кэш не влезет в лимит; возвращает удалённое.
+export async function sweep(busy: Set<string>): Promise<string[]> {
+  const items = await list();
   const now = Date.now();
   const alive: Item[] = [];
+  const gone: string[] = [];
   for (const it of items) {
     if (busy.has(it.file.replace(/\.part$/, ""))) continue;
-    if (now - it.mtime > TTL) await fsp.rm(it.file, { force: true });
-    else alive.push(it);
+    if (now - it.mtime > TTL) {
+      await fsp.rm(it.file, { force: true });
+      gone.push(it.file);
+    } else alive.push(it);
   }
   let total = alive.reduce((s, it) => s + it.size, 0);
   alive.sort((a, b) => a.mtime - b.mtime);
   for (const it of alive) {
     if (total <= LIMIT) break;
     await fsp.rm(it.file, { force: true });
+    gone.push(it.file);
     total -= it.size;
   }
+  await prune();
+  return gone;
 }

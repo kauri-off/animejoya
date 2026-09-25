@@ -1245,6 +1245,219 @@ kbd {
   place-items: center;
 }
 
+/* — кэш — */
+.cache {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 26px 26px 120px;
+}
+.cache-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
+  gap: 18px 28px;
+  align-items: end;
+}
+.cache-intro h1 {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+.cache-intro p {
+  margin-top: 6px;
+  max-width: 460px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.cache-meter {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.cache-meter .row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.cache-meter .row b {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+}
+.cache-meter small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #5d5b70;
+  font-size: 11.5px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.cache .track {
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.cache .track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  transition: width 0.3s var(--ease);
+}
+.cache .track.hot i {
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+}
+.cache-acts {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.act.danger.armed {
+  color: #fff;
+  border-color: var(--danger);
+  background: var(--danger);
+}
+.cache-empty {
+  flex: 1;
+  height: auto;
+}
+
+.cache-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 28px;
+}
+.cache-title {
+  border-radius: var(--radius);
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+.cache-title-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 12px 12px 14px;
+}
+.cache-title-head .thumb {
+  flex: none;
+  width: 40px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-weight: 600;
+}
+.cache-title-head .thumb:disabled {
+  cursor: default;
+}
+.cache-title-head .thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cache-title-head .what {
+  flex: 1;
+  min-width: 0;
+}
+.cache-title-head .name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-weight: 580;
+  font-size: 14.5px;
+}
+button.name:hover {
+  color: #fff;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+.cache-title-head .meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cache-files {
+  border-top: 1px solid var(--line-soft);
+}
+.cache-file {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 8px 4px 14px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.cache-file + .cache-file {
+  border-top: 1px solid var(--line-soft);
+}
+.cache-file:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.cache-file b {
+  font-weight: 560;
+  min-width: 78px;
+}
+.cache-file .q {
+  min-width: 46px;
+  text-align: center;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.cache-file .size {
+  color: var(--muted);
+  min-width: 64px;
+}
+.cache-file .status {
+  color: #6c6a80;
+  font-size: 12px;
+}
+.cache-file .status.live {
+  color: var(--accent);
+}
+.cache-file.partial b {
+  color: var(--muted);
+}
+.cache-file .act.quiet {
+  height: 32px;
+}
+.cache-file .track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 0;
+}
+
 /* — сенсорные экраны: ховеры не залипают, крестик виден сразу — */
 @media (hover: none) {
   .card:hover .poster,
@@ -1314,6 +1527,30 @@ kbd {
 
   .detail {
     padding: 16px 14px calc(190px + env(safe-area-inset-bottom));
+  }
+
+  .cache {
+    padding: 16px max(14px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom))
+      max(14px, env(safe-area-inset-left));
+  }
+  .cache-head {
+    grid-template-columns: 1fr;
+  }
+  .cache-acts > * {
+    flex: 1;
+    justify-content: center;
+    height: 42px;
+  }
+  .cache-file {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    padding: 8px 6px 8px 12px;
+  }
+  .cache-file b {
+    min-width: 0;
+  }
+  .cache-file .size {
+    min-width: 0;
   }
 
   .theater {
