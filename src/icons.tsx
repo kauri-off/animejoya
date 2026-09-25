@@ -78,3 +78,20 @@ export const Zap = ({ size }: P) => (
     <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />
   </svg>
 );
+export const Search = ({ size }: P) => (
+  <svg {...base(size)}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m20 20-4.2-4.2" />
+  </svg>
+);
+export const CheckAll = ({ size }: P) => (
+  <svg {...base(size)}>
+    <path d="M2.5 12.5 7 17 16.5 7M12 16l1 1 9.5-10" />
+  </svg>
+);
+export const Keyboard = ({ size }: P) => (
+  <svg {...base(size)}>
+    <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
+    <path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14h8" />
+  </svg>
+);

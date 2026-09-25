@@ -191,6 +191,14 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     })();
   },
 
+  library_restore: async ({ entry, index }) => {
+    const e = entry as Entry;
+    if (typeof e?.url !== "string" || library.some((x) => x.url === e.url)) return library;
+    library.splice(Math.max(0, Math.min(Number(index) || 0, library.length)), 0, store.pickEntry(e));
+    store.saveLibrary(library);
+    return library;
+  },
+
   library_remove: async ({ url }) => {
     const i = library.findIndex((e) => e.url === url);
     if (i >= 0) library.splice(i, 1);
@@ -240,7 +248,14 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     const external = playlist.externalNames();
 
     playlists.set(target, playlist);
-    return { entry: upsert(target, meta), players, external, dir };
+    const entry = upsert(target, meta);
+    const tags = new Set(players.flatMap((p) => p.episodes.map((e) => e.tag)));
+    const stored = library.find((e) => e.url === target);
+    if (stored !== undefined && tags.size > 0 && stored.total !== tags.size) {
+      stored.total = entry.total = tags.size;
+      store.saveLibrary(library);
+    }
+    return { entry, players, external, dir };
   },
 
   player_resolve: async ({ url, playerId }) =>
@@ -256,11 +271,12 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     store.saveLibrary(library);
   },
 
-  mark_watched: async ({ url, episode, watched }) => {
+  mark_watched: async ({ url, episode, episodes, watched }) => {
     const e = library.find((x) => x.url === url);
     if (e === undefined) return [];
-    e.watched = e.watched.filter((w) => w !== episode);
-    if (watched) e.watched.push(episode as string);
+    const list = new Set<string>(Array.isArray(episodes) ? episodes : [episode]);
+    e.watched = e.watched.filter((w) => !list.has(w));
+    if (watched) e.watched.push(...list);
     store.saveLibrary(library);
     return e.watched;
   },

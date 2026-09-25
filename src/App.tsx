@@ -14,11 +14,21 @@ import {
 import Library from "./components/Library";
 import TitleScreen, { type Actions } from "./components/TitleScreen";
 import Queue from "./components/Queue";
-import { AddSheet, SettingsSheet } from "./components/Sheets";
-import { Back, ExternalLink, Gear, Plus, Refresh } from "./icons";
+import { AddSheet, HelpSheet, SettingsSheet } from "./components/Sheets";
+import { Back, ExternalLink, Gear, Keyboard, Plus, Refresh } from "./icons";
 
-type Toast = { id: number; text: string; bad?: boolean };
-type Sheet = "add" | "settings" | null;
+type Action = { label: string; run: () => void };
+type Toast = { id: number; text: string; bad?: boolean; action?: Action };
+type Sheet = "add" | "settings" | "help" | null;
+
+const needsLogin = (text: string) => text.includes("нужен вход");
+const titleFromHash = () => {
+  try {
+    return decodeURIComponent(location.hash.slice(1));
+  } catch {
+    return "";
+  }
+};
 
 const hostOf = (url: string) => {
   try {
@@ -48,12 +58,29 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [syncing, setSyncing] = useState(0);
   const seq = useRef(0);
+  const libRef = useRef(library);
+  libRef.current = library;
+  const openUrl = useRef<string | null>(null);
+  openUrl.current = open?.entry.url ?? null;
 
-  const toast = useCallback((text: string, bad = false) => {
-    const id = ++seq.current;
-    setToasts((t) => [...t, { id, text, bad }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), bad ? 6000 : 3200);
-  }, []);
+  const dismiss = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+
+  const toast = useCallback(
+    (text: string, bad = false, action?: Action) => {
+      const id = ++seq.current;
+      setToasts((t) => [...t, { id, text, bad, action }]);
+      setTimeout(() => dismiss(id), bad || action ? 6000 : 3200);
+    },
+    [dismiss],
+  );
+
+  const fail = useCallback(
+    (e: unknown) => {
+      const text = String(e);
+      toast(text, true, needsLogin(text) ? { label: "Настройки", run: () => setSheet("settings") } : undefined);
+    },
+    [toast],
+  );
 
   useEffect(() => {
     api
@@ -89,28 +116,63 @@ export default function App() {
     };
   }, [toast]);
 
+  // Тайтл живёт в адресе: работают «Назад» браузера/мыши и F5.
   const load = useCallback(
-    async (url: string) => {
+    async (url: string, push = true) => {
       setLoading(true);
       try {
         const data = await api.titleOpen(url);
         setOpen(data);
+        if (push && history.state?.title !== data.entry.url) {
+          history.pushState({ title: data.entry.url }, "", `#${encodeURIComponent(data.entry.url)}`);
+        }
         setLibrary(await api.libraryGet());
       } catch (e) {
-        toast(String(e), true);
+        fail(e);
         setOpen(null);
+        if (history.state?.title) history.replaceState(null, "", location.pathname);
       } finally {
         setLoading(false);
       }
     },
-    [toast],
+    [fail],
   );
+
+  const close = useCallback(() => {
+    if (history.state?.title) history.back();
+    else setOpen(null);
+  }, []);
+
+  useEffect(() => {
+    const initial = titleFromHash();
+    if (initial) {
+      history.replaceState(null, "", location.pathname);
+      void load(initial);
+    }
+    const onPop = () => {
+      const url: string | undefined = history.state?.title;
+      if (!url) setOpen(null);
+      else if (url !== openUrl.current) void load(url, false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [load]);
 
   const openEntry = useCallback((e: Entry) => load(e.url), [load]);
 
-  const removeEntry = useCallback((e: Entry) => {
-    api.libraryRemove(e.url).then(() => setLibrary((l) => l.filter((x) => x.url !== e.url)));
-  }, []);
+  const removeEntry = useCallback(
+    (e: Entry) => {
+      const index = libRef.current.findIndex((x) => x.url === e.url);
+      api.libraryRemove(e.url).then(() => {
+        setLibrary((l) => l.filter((x) => x.url !== e.url));
+        toast(`«${e.title || e.url}» убран из библиотеки`, false, {
+          label: "Вернуть",
+          run: () => api.libraryRestore(e, index).then(setLibrary, fail),
+        });
+      }, fail);
+    },
+    [toast, fail],
+  );
 
   const reorderLibrary = useCallback((next: Entry[]) => setLibrary(next), []);
 
@@ -164,9 +226,14 @@ export default function App() {
       setSheet("add");
     };
     const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if (e.key === "?" && !typing && !sheet) {
+        setSheet("help");
+        return;
+      }
       if (e.key !== "Escape" || document.fullscreenElement) return;
       if (sheet) setSheet(null);
-      else if (open) setOpen(null);
+      else if (open) close();
     };
     window.addEventListener("paste", onPaste);
     window.addEventListener("keydown", onKey);
@@ -174,7 +241,7 @@ export default function App() {
       window.removeEventListener("paste", onPaste);
       window.removeEventListener("keydown", onKey);
     };
-  }, [sheet, open]);
+  }, [sheet, open, close]);
 
   const actions: Actions = {
     download: (ep, quality) => {
@@ -220,31 +287,35 @@ export default function App() {
         toast(String(e), true);
       }
     },
-    markWatched: (ep) => markWatched(ep, true),
+    markWatched: (ep) => markWatched([ep], true),
+    markUpTo: (eps) => {
+      markWatched(eps, true);
+      toast(`Отмечено серий: ${eps.length}`);
+    },
     toggleWatched: (ep) => {
       if (!open) return;
-      markWatched(ep, !open.entry.watched.includes(ep.title));
+      markWatched([ep], !open.entry.watched.includes(ep.title));
     },
     remember: (player, quality) => {
       if (open) api.rememberChoice(open.entry.url, player, quality).catch(() => {});
     },
   };
 
-  function markWatched(ep: Episode, watched: boolean) {
+  function markWatched(eps: Episode[], watched: boolean) {
     if (!open) return;
-    api.markWatched(open.entry.url, ep.title, watched).then((list) => {
+    api.markWatched(open.entry.url, eps.map((e) => e.title), watched).then((list) => {
       setOpen((t) => (t ? { ...t, entry: { ...t.entry, watched: list } } : t));
       setLibrary((lib) =>
         lib.map((e) => (e.url === open.entry.url ? { ...e, watched: list } : e)),
       );
-    });
+    }, fail);
   }
 
   return (
     <div className="app">
       <header className="topbar">
         {open ? (
-          <button className="ghost" title="Библиотека" onClick={() => setOpen(null)}>
+          <button className="ghost" title="Библиотека (Esc)" onClick={close}>
             <Back size={15} /> <span className="wide">Библиотека</span>
           </button>
         ) : (
@@ -283,6 +354,9 @@ export default function App() {
           </button>
         )}
         <Queue jobs={jobs} onCancel={(id) => api.preloadCancel(id)} />
+        <button className="ghost desk" title="Горячие клавиши (?)" onClick={() => setSheet("help")}>
+          <Keyboard size={16} />
+        </button>
         <button className="ghost" title="Настройки" onClick={() => setSheet("settings")}>
           <Gear size={15} />
         </button>
@@ -325,6 +399,17 @@ export default function App() {
               transition={{ type: "spring", stiffness: 460, damping: 34 }}
             >
               {t.text}
+              {t.action && (
+                <button
+                  className="toast-act"
+                  onClick={() => {
+                    dismiss(t.id);
+                    t.action!.run();
+                  }}
+                >
+                  {t.action.label}
+                </button>
+              )}
             </motion.div>
           ))}
         </AnimatePresence>
@@ -339,8 +424,10 @@ export default function App() {
             initial={draft}
             onClose={() => setSheet(null)}
             onSubmit={add}
+            onSettings={addError && needsLogin(addError) ? () => setSheet("settings") : undefined}
           />
         )}
+        {sheet === "help" && <HelpSheet key="help" onClose={() => setSheet(null)} />}
         {sheet === "settings" && settings && (
           <SettingsSheet
             key="settings"

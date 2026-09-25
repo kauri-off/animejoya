@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { media, rank, type Episode, type Progress, type Title } from "../api";
-import { Check, Download, Next, Play, Prev, Trash, X, Zap } from "../icons";
+import { Check, CheckAll, Download, Next, Play, Prev, Trash, X, Zap } from "../icons";
 
 const Watch = lazy(() => import("./Watch"));
 
@@ -18,6 +18,7 @@ export type Actions = {
   resolvePlayer: (playerId: string) => Promise<void>;
   toggleWatched: (ep: Episode) => void;
   markWatched: (ep: Episode) => void;
+  markUpTo: (eps: Episode[]) => void;
   remember: (player?: string, quality?: string) => void;
 };
 
@@ -65,6 +66,11 @@ export default function TitleScreen({
     : playingSource
       ? media.remote(playingSource)
       : null;
+
+  const lastSeen = episodes.reduce((n, e, i) => (entry.watched.includes(e.title) ? i : n), -1);
+  const seenHere = episodes.filter((e) => entry.watched.includes(e.title)).length;
+  const finished = episodes.length > 0 && lastSeen === episodes.length - 1;
+  const upNext = episodes.length === 0 ? null : finished ? 0 : lastSeen + 1;
 
   const watch = (i: number) => {
     setWatching(i);
@@ -141,6 +147,12 @@ export default function TitleScreen({
   useEffect(() => {
     if (watching === null) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.shiftKey && (e.code === "KeyN" || e.code === "KeyP")) {
+        const to = watching + (e.code === "KeyN" ? 1 : -1);
+        if (to >= 0 && to < episodes.length) setWatching(to);
+        e.preventDefault();
+        return;
+      }
       if (e.key !== "Escape" || document.fullscreenElement) return;
       e.stopImmediatePropagation();
       if (pick !== null) setPick(null);
@@ -148,7 +160,7 @@ export default function TitleScreen({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [watching, pick]);
+  }, [watching, pick, episodes.length]);
 
   // У AllVideo и Sibnet ссылки лежат на их стороне — забираем при выборе озвучки.
   const pending = Boolean(player?.resolvable) && episodes.every((e) => e.sources.length === 0);
@@ -233,6 +245,27 @@ export default function TitleScreen({
           <h1>{entry.title}</h1>
           {entry.original && <div className="romanji">{entry.original}</div>}
 
+          {upNext !== null && episodes[upNext] && (
+            <div className="resume">
+              <button
+                className="primary big"
+                disabled={pending}
+                onClick={() => (watching === upNext ? theater.current?.scrollIntoView({ behavior: "smooth" }) : watch(upNext))}
+              >
+                <Play size={14} />
+                {finished ? "Пересмотреть" : lastSeen < 0 ? "Смотреть" : "Продолжить"}
+                <span className="what">{episodes[upNext].title}</span>
+              </button>
+              <span className="hint">
+                {finished
+                  ? "Все серии просмотрены"
+                  : seenHere > 0
+                    ? `Просмотрено ${seenHere} из ${episodes.length}`
+                    : `${episodes.length} ${plural(episodes.length, "серия", "серии", "серий")}`}
+              </span>
+            </div>
+          )}
+
           {entry.genres.length > 0 && (
             <div className="tags">
               {entry.genres.map((g) => (
@@ -288,7 +321,20 @@ export default function TitleScreen({
       )}
 
       <div className="section">
-        <h3>Серии</h3>
+        <div className="eps-head">
+          <h3>Серии</h3>
+          {episodes.length > 0 && (
+            <div className="legend">
+              <span>
+                <Check size={11} /> просмотрена
+              </span>
+              <span>
+                <i className="dot" /> в кэше, без подгрузок
+              </span>
+              <span className="desk">двойной клик — смотреть</span>
+            </div>
+          )}
+        </div>
         {episodes.length === 0 ? (
           <p className="hint">У этого тайтла нет «своего» плеера — только внешние iframe.</p>
         ) : (
@@ -301,7 +347,9 @@ export default function TitleScreen({
                   key={e.title + i}
                   className={`ep${i === pick ? " on" : seen ? " seen" : ""}${i === watching ? " playing" : ""}`}
                   disabled={pending}
+                  title={[e.title, seen && "просмотрена", e.file && "в кэше"].filter(Boolean).join(" · ")}
                   onClick={() => setPick(i === pick ? null : i)}
+                  onDoubleClick={() => watch(i)}
                 >
                   {e.tag.replace(/^0/, "")}
                   {e.file && <span className="dot" />}
@@ -375,16 +423,36 @@ export default function TitleScreen({
                 </button>
               )}
               <button
-                className="act quiet"
-                title="Отметить просмотренной"
+                className={`act quiet${entry.watched.includes(episode.title) ? " lit" : ""}`}
+                title={entry.watched.includes(episode.title) ? "Снять отметку о просмотре" : "Отметить просмотренной"}
                 onClick={() => actions.toggleWatched(episode)}
               >
                 <Check size={14} />
               </button>
+              {pick > 0 && (
+                <button
+                  className="act quiet"
+                  title="Отметить просмотренными все серии до этой включительно"
+                  onClick={() => {
+                    actions.markUpTo(episodes.slice(0, pick + 1));
+                    setPick(null);
+                  }}
+                >
+                  <CheckAll size={15} />
+                </button>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
   );
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
 }

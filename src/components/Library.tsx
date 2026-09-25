@@ -1,12 +1,37 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import type { Entry } from "../api";
-import { Plus, X } from "../icons";
+import { Check, Plus, Search, X } from "../icons";
 import { useLibraryDrag } from "./useLibraryDrag";
 
 const LAYOUT_SPRING = { type: "spring" as const, stiffness: 320, damping: 30, mass: 0.8 };
 const MOVE_KEYS = "Control+ArrowLeft Control+ArrowRight Control+ArrowUp Control+ArrowDown";
+const SEARCH_FROM = 6;
+
+const norm = (s: string) => s.toLowerCase().replace(/ё/g, "е");
+
+function Progress({ entry }: { entry: Entry }) {
+  const seen = entry.watched.length;
+  if (entry.total === 0) return seen > 0 ? <div className="badge">{seen} просм.</div> : null;
+  if (seen >= entry.total) {
+    return (
+      <div className="badge done">
+        <Check size={11} /> Просмотрено
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="badge">{seen > 0 ? `${seen} / ${entry.total}` : `${entry.total} сер.`}</div>
+      {seen > 0 && (
+        <div className="progress">
+          <i style={{ width: `${(seen / entry.total) * 100}%` }} />
+        </div>
+      )}
+    </>
+  );
+}
 
 function CardBody({ entry, onRemove }: { entry: Entry; onRemove?: (e: Entry) => void }) {
   return (
@@ -19,7 +44,7 @@ function CardBody({ entry, onRemove }: { entry: Entry; onRemove?: (e: Entry) => 
             <span>{(entry.title || "?").trim().charAt(0)}</span>
           </div>
         )}
-        {entry.watched.length > 0 && <div className="badge">{entry.watched.length} просм.</div>}
+        <Progress entry={entry} />
         {onRemove && (
           <button
             type="button"
@@ -57,7 +82,32 @@ function Library({
   onReorderCommit: (items: Entry[]) => void;
 }) {
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState("");
+  const [query, setQuery] = useState("");
+
+  const shown = useMemo(() => {
+    const q = norm(query.trim());
+    if (!q) return items;
+    return items.filter((e) => norm(`${e.title} ${e.original}`).includes(q));
+  }, [items, query]);
+  const filtering = shown !== items;
+  const searchable = items.length >= SEARCH_FROM || query !== "";
+
+  useEffect(() => {
+    if (!searchable) return;
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const find = (e.key === "f" || e.key === "а") && (e.ctrlKey || e.metaKey);
+      if ((e.key === "/" && !typing) || find) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchable]);
 
   const { drag, onPointerDown, registerCard, setPreviewEl, consumeClickSuppression } = useLibraryDrag({
     items,
@@ -87,7 +137,7 @@ function Library({
         onOpen(entry);
         return;
       }
-      if (!ev.ctrlKey && !ev.metaKey) return;
+      if ((!ev.ctrlKey && !ev.metaKey) || filtering) return;
       const grid = gridRef.current;
       const columns = grid
         ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length
@@ -102,7 +152,7 @@ function Library({
       ev.preventDefault();
       move(entry, step);
     },
-    [move, onOpen],
+    [move, onOpen, filtering],
   );
 
   if (items.length === 0) {
@@ -123,8 +173,47 @@ function Library({
 
   return (
     <>
-      <div className="grid" ref={gridRef}>
-        {items.map((e) => (
+      {searchable && (
+        <div className="lib-bar">
+          <label className="search">
+            <Search size={15} />
+            <input
+              ref={searchRef}
+              value={query}
+              placeholder="Поиск по библиотеке"
+              aria-keyshortcuts="/ Control+F"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  if (query) setQuery("");
+                  else e.currentTarget.blur();
+                } else if (e.key === "Enter" && shown.length === 1) {
+                  onOpen(shown[0]!);
+                }
+              }}
+            />
+            {query ? (
+              <button type="button" className="clear" title="Очистить" onClick={() => setQuery("")}>
+                <X size={13} />
+              </button>
+            ) : (
+              <kbd>/</kbd>
+            )}
+          </label>
+          <span className="count">
+            {filtering
+              ? `${shown.length} из ${items.length} · порядок меняется без фильтра`
+              : `${items.length} в библиотеке · карточки можно перетаскивать`}
+          </span>
+        </div>
+      )}
+
+      {filtering && shown.length === 0 && (
+        <p className="hint nothing">Ничего не нашлось по запросу «{query.trim()}»</p>
+      )}
+
+      <div className={`grid${searchable ? " tight" : ""}`} ref={gridRef}>
+        {shown.map((e) => (
           <motion.div
             key={e.url}
             ref={registerCard(e.url)}
@@ -134,7 +223,9 @@ function Library({
             role="button"
             tabIndex={0}
             aria-keyshortcuts={MOVE_KEYS}
-            onPointerDown={(ev) => onPointerDown(ev, e)}
+            onPointerDown={(ev) => {
+              if (!filtering) onPointerDown(ev, e);
+            }}
             onClick={() => {
               if (!consumeClickSuppression()) onOpen(e);
             }}

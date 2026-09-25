@@ -12,6 +12,7 @@ export type Entry = {
   watched: string[];
   lastPlayer: string | null;
   lastQuality: string | null;
+  total: number;
   addedAt: number;
 };
 
@@ -57,14 +58,15 @@ export const api = {
   libraryAdd: (url: string) => call<Entry>("library_add", { url }),
   librarySync: (force: boolean) => call<void>("library_sync", { force }),
   libraryRemove: (url: string) => call<void>("library_remove", { url }),
+  libraryRestore: (entry: Entry, index: number) => call<Entry[]>("library_restore", { entry, index }),
   libraryReorder: (urls: string[]) => call<Entry[]>("library_reorder", { urls }),
   titleOpen: (url: string) => call<Title>("title_open", { url }),
   playerResolve: (url: string, playerId: string) =>
     call<Episode[]>("player_resolve", { url, playerId }),
   rememberChoice: (url: string, player?: string, quality?: string) =>
     call<void>("remember_choice", { url, player, quality }),
-  markWatched: (url: string, episode: string, watched: boolean) =>
-    call<string[]>("mark_watched", { url, episode, watched }),
+  markWatched: (url: string, episodes: string[], watched: boolean) =>
+    call<string[]>("mark_watched", { url, episodes, watched }),
   preloadStart: (a: {
     pageUrl: string;
     episode: string;

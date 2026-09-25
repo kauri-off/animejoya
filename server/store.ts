@@ -20,6 +20,7 @@ export type Entry = {
   watched: string[];
   lastPlayer: string | null;
   lastQuality: string | null;
+  total: number;
   addedAt: number;
 };
 
@@ -65,6 +66,7 @@ export function blank(url: string, title = ""): Entry {
     watched: [],
     lastPlayer: null,
     lastQuality: null,
+    total: 0,
     addedAt: now(),
   };
 }
@@ -78,7 +80,7 @@ function pickSettings(raw: Partial<Settings>): Settings {
   };
 }
 
-function pickEntry(raw: Partial<Entry>): Entry {
+export function pickEntry(raw: Partial<Entry>): Entry {
   const base = blank(raw.url ?? "");
   return {
     ...base,

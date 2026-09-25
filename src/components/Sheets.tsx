@@ -33,18 +33,23 @@ export function AddSheet({
   initial,
   onClose,
   onSubmit,
+  onSettings,
 }: {
   busy: boolean;
   error: string | null;
   initial: string;
   onClose: () => void;
   onSubmit: (url: string) => void;
+  onSettings?: () => void;
 }) {
   const [url, setUrl] = useState(initial);
   return (
     <Veil onClose={onClose}>
       <h2>Новый тайтл</h2>
-      <p className="sub">Ссылка на страницу тайтла с animejoya.ru</p>
+      <p className="sub">
+        Откройте тайтл на animejoya.ru, скопируйте адрес страницы и вставьте сюда. Подойдут и
+        зеркала сайта.
+      </p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -59,7 +64,16 @@ export function AddSheet({
             onChange={(e) => setUrl(e.target.value)}
           />
         </label>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="error">
+            {error}
+            {onSettings && (
+              <button type="button" className="link" onClick={onSettings}>
+                Открыть настройки
+              </button>
+            )}
+          </div>
+        )}
         <div className="buttons">
           <button type="button" className="ghost" onClick={onClose}>
             Отмена
@@ -114,6 +128,58 @@ export function SettingsSheet({
           <button className="primary">Сохранить</button>
         </div>
       </form>
+    </Veil>
+  );
+}
+
+const SHORTCUTS: [string, [string[], string][]][] = [
+  [
+    "Библиотека",
+    [
+      [["Ctrl", "V"], "добавить тайтл по ссылке из буфера"],
+      [["/"], "поиск по библиотеке"],
+      [["Ctrl", "←→↑↓"], "сдвинуть выбранную карточку"],
+      [["Enter"], "открыть выбранную карточку"],
+    ],
+  ],
+  [
+    "Тайтл и плеер",
+    [
+      [["Esc"], "закрыть плеер, затем вернуться в библиотеку"],
+      [["Shift", "N"], "следующая серия"],
+      [["Shift", "P"], "предыдущая серия"],
+      [["Space"], "пауза / воспроизведение"],
+      [["F"], "во весь экран"],
+      [["←", "→"], "перемотка"],
+    ],
+  ],
+];
+
+export function HelpSheet({ onClose }: { onClose: () => void }) {
+  return (
+    <Veil onClose={onClose}>
+      <h2>Горячие клавиши</h2>
+      <p className="sub">Двойной клик по серии сразу запускает её, серия отмечается просмотренной ближе к концу</p>
+      {SHORTCUTS.map(([group, keys]) => (
+        <div className="keys" key={group}>
+          <h3>{group}</h3>
+          {keys.map(([combo, label]) => (
+            <div className="key" key={label}>
+              <span>
+                {combo.map((k) => (
+                  <kbd key={k}>{k}</kbd>
+                ))}
+              </span>
+              {label}
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="buttons">
+        <button type="button" className="primary" onClick={onClose}>
+          Понятно
+        </button>
+      </div>
     </Veil>
   );
 }
