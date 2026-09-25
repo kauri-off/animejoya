@@ -26,10 +26,12 @@ export default function TitleScreen({
   data,
   jobs,
   actions,
+  preloadNext,
 }: {
   data: Title;
   jobs: Record<string, Progress>;
   actions: Actions;
+  preloadNext: boolean;
 }) {
   const { entry, players } = data;
   const [playerId, setPlayerId] = useState(
@@ -138,10 +140,10 @@ export default function TitleScreen({
 
   // Пока смотрим серию, следующая тихо ложится во временный кэш.
   useEffect(() => {
-    if (watching === null) return;
+    if (watching === null || !preloadNext) return;
     const next = episodes[watching + 1];
     if (next && !next.file && next.sources.length > 0 && !jobFor(next)) actions.preload(next, active);
-  }, [watching, playerId]);
+  }, [watching, playerId, preloadNext]);
 
   // Esc сначала закрывает плеер, а уже потом — карточку тайтла.
   useEffect(() => {

@@ -23,6 +23,7 @@ export type Title = { entry: Entry; players: Player[]; external: string[]; dir: 
 export type Settings = {
   username: string;
   password: string;
+  preloadNext: boolean;
 };
 
 export type CacheFile = {

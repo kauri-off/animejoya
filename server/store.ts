@@ -7,6 +7,7 @@ export type Fact = { key: string; value: string };
 export type Settings = {
   username: string;
   password: string;
+  preloadNext: boolean;
 };
 
 export type Entry = {
@@ -27,6 +28,7 @@ export type Entry = {
 const DEFAULTS: Settings = {
   username: "",
   password: "",
+  preloadNext: true,
 };
 
 export function configDir(): string {
@@ -77,6 +79,7 @@ function pickSettings(raw: Partial<Settings>): Settings {
   return {
     username: raw.username ?? DEFAULTS.username,
     password: raw.password ?? DEFAULTS.password,
+    preloadNext: raw.preloadNext ?? DEFAULTS.preloadNext,
   };
 }
 

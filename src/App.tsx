@@ -402,7 +402,7 @@ export default function App() {
             </motion.div>
           ) : open ? (
             <motion.div key={open.entry.url} {...page}>
-              <TitleScreen data={open} jobs={jobs} actions={actions} />
+              <TitleScreen data={open} jobs={jobs} actions={actions} preloadNext={settings?.preloadNext ?? true} />
             </motion.div>
           ) : cacheOpen ? (
             <motion.div key="cache" {...page} style={{ height: "100%" }}>

@@ -121,6 +121,14 @@ export function SettingsSheet({
             onChange={(e) => set({ password: e.target.value })}
           />
         </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={s.preloadNext}
+            onChange={(e) => set({ preloadNext: e.target.checked })}
+          />
+          <span>Заранее загружать следующую серию во время просмотра</span>
+        </label>
         <div className="buttons">
           <button type="button" className="ghost" onClick={onClose}>
             Отмена
