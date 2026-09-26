@@ -135,7 +135,11 @@ export default function App() {
             `#${encodeURIComponent(data.entry.url)}`,
           );
         }
-        setLibrary(await api.libraryGet());
+        setLibrary((lib) =>
+          lib.some((e) => e.url === data.entry.url)
+            ? lib.map((e) => (e.url === data.entry.url ? data.entry : e))
+            : [data.entry, ...lib],
+        );
       } catch (e) {
         fail(e);
         setOpen(null);

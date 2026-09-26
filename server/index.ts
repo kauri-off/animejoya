@@ -43,6 +43,8 @@ const site = new Site();
 const library: Entry[] = store.loadLibrary();
 const jobs = new Map<string, Job>();
 const playlists = new Map<string, Playlist>();
+const fetchedAt = new Map<string, number>();
+const FRESH_MS = 5 * 60_000;
 
 const clients = new Set<ReadableStreamDefaultController<string>>();
 
@@ -63,6 +65,17 @@ async function page(url: string): Promise<string> {
   html = await site.getPage(url);
   if (!isAuthorized(html)) throw new Error("страница недоступна — проверьте ссылку и права аккаунта");
   return html;
+}
+
+/// news_id совпадает с id в адресе — плейлист просим сразу, не дожидаясь страницы.
+async function fetchTitle(url: string): Promise<{ html: string; playlist: Playlist }> {
+  const guess = /\/(\d+)-[^/]*\.html?$/.exec(new URL(url).pathname)?.[1];
+  const early = guess === undefined ? null : site.playlist(guess, url).catch(() => null);
+  const html = await page(url);
+  const newsId = parseNewsId(html);
+  if (newsId === null) throw new Error("на странице нет плейлиста (это точно страница тайтла?)");
+  const playlist = (newsId === guess ? await early : null) ?? (await site.playlist(newsId, url));
+  return { html, playlist };
 }
 
 function merge(entry: Entry, meta: Meta): void {
@@ -287,12 +300,17 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
   /// Полная карточка тайтла: озвучки, серии, что уже лежит в кэше.
   title_open: async ({ url }): Promise<TitleView> => {
     const target = store.normalizeUrl(url as string);
-    const html = await page(target);
-    const newsId = parseNewsId(html);
-    if (newsId === null) throw new Error("на странице нет плейлиста (это точно страница тайтла?)");
-
-    const meta = parseMeta(html);
-    const playlist = await site.playlist(newsId, target);
+    let playlist = playlists.get(target);
+    let entry = library.find((e) => e.url === target);
+    if (playlist === undefined || entry === undefined || Date.now() - (fetchedAt.get(target) ?? 0) > FRESH_MS) {
+      const fresh = await fetchTitle(target);
+      playlist = fresh.playlist;
+      playlists.set(target, playlist);
+      fetchedAt.set(target, Date.now());
+      entry = upsert(target, parseMeta(fresh.html));
+    } else {
+      entry = { ...entry };
+    }
 
     const dir = cache.dirOf(store.slug(target));
 
@@ -304,8 +322,6 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     }));
     const external = playlist.externalNames();
 
-    playlists.set(target, playlist);
-    const entry = upsert(target, meta);
     const tags = new Set(players.flatMap((p) => p.episodes.map((e) => e.tag)));
     const stored = library.find((e) => e.url === target);
     if (stored !== undefined && tags.size > 0 && stored.total !== tags.size) {
