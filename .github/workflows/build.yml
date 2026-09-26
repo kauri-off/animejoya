@@ -71,8 +71,7 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - run: npm run embed
-      - run: bun build --compile --minify server/index.ts --outfile animejoya
+      - run: bun build --compile --minify server/index.ts --asset dist --outfile animejoya
 
       - uses: actions/upload-artifact@v4
         with:

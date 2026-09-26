@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Download, X } from "lucide-react";
 import { bytes, type Progress } from "../api";
-import { Download, X } from "../icons";
 
 const name = (id: string) => id.split("/").pop() ?? id;
 const C = 2 * Math.PI * 15;

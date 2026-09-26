@@ -1,13 +1,31 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type DragEndEvent,
+  type DragStartEvent,
+  type UniqueIdentifier,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Check, Plus, Search, X } from "lucide-react";
 import type { Entry } from "../api";
-import { Check, Plus, Search, X } from "../icons";
-import { useLibraryDrag } from "./useLibraryDrag";
 
 const LAYOUT_SPRING = { type: "spring" as const, stiffness: 320, damping: 30, mass: 0.8 };
+const DROP = { duration: 200, easing: "cubic-bezier(0.2, 0.9, 0.3, 1)" };
 const MOVE_KEYS = "Control+ArrowLeft Control+ArrowRight Control+ArrowUp Control+ArrowDown";
 const SEARCH_FROM = 6;
+const MOUSE_THRESHOLD = 8;
+const TOUCH_HOLD_MS = 260;
+const TOUCH_HOLD_SLOP = 10;
 
 const norm = (s: string) => s.toLowerCase().replace(/ё/g, "е");
 
@@ -51,6 +69,8 @@ function CardBody({ entry, onRemove }: { entry: Entry; onRemove?: (e: Entry) => 
             className="kill"
             aria-label="Удалить из библиотеки"
             title="Удалить из библиотеки"
+            onMouseDown={(ev) => ev.stopPropagation()}
+            onTouchStart={(ev) => ev.stopPropagation()}
             onClick={(ev) => {
               ev.stopPropagation();
               onRemove(entry);
@@ -66,25 +86,60 @@ function CardBody({ entry, onRemove }: { entry: Entry; onRemove?: (e: Entry) => 
   );
 }
 
+function SortableCard({
+  entry,
+  disabled,
+  layoutKey,
+  onOpen,
+  onRemove,
+  onKeyDown,
+}: {
+  entry: Entry;
+  disabled: boolean;
+  layoutKey: unknown;
+  onOpen: (e: Entry) => void;
+  onRemove: (e: Entry) => void;
+  onKeyDown: (ev: React.KeyboardEvent, e: Entry) => void;
+}) {
+  const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({ id: entry.url, disabled });
+  return (
+    // Раскладку при удалении и Ctrl+стрелках анимирует motion, во время перетаскивания — dnd-kit.
+    <motion.div layout="position" layoutDependency={layoutKey} transition={{ layout: LAYOUT_SPRING }}>
+      <div
+        ref={setNodeRef}
+        style={{ transform: CSS.Translate.toString(transform), transition }}
+        className={`card${isDragging ? " placeholder" : ""}`}
+        role="button"
+        tabIndex={0}
+        aria-keyshortcuts={MOVE_KEYS}
+        {...listeners}
+        onClick={() => onOpen(entry)}
+        onKeyDown={(ev) => onKeyDown(ev, entry)}
+      >
+        <CardBody entry={entry} onRemove={onRemove} />
+      </div>
+    </motion.div>
+  );
+}
+
 function Library({
   items,
   onOpen,
   onRemove,
   onAdd,
   onReorder,
-  onReorderCommit,
 }: {
   items: Entry[];
   onOpen: (e: Entry) => void;
   onRemove: (e: Entry) => void;
   onAdd: () => void;
   onReorder: (items: Entry[]) => void;
-  onReorderCommit: (items: Entry[]) => void;
 }) {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
+  const [active, setActive] = useState<Entry | null>(null);
 
   const shown = useMemo(() => {
     const q = norm(query.trim());
@@ -93,6 +148,39 @@ function Library({
   }, [items, query]);
   const filtering = shown !== items;
   const searchable = items.length >= SEARCH_FROM || query !== "";
+
+  // Пока тянем и в кадре сброса motion не трогает раскладку: карточки уже стоят там, куда их сдвинул dnd-kit.
+  const dropped = useRef(false);
+  const layoutKey = useRef<unknown>(shown);
+  if (active === null && !dropped.current) layoutKey.current = shown;
+  useEffect(() => {
+    dropped.current = false;
+  });
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: MOUSE_THRESHOLD } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: TOUCH_HOLD_MS, tolerance: TOUCH_HOLD_SLOP } }),
+  );
+
+  const nameOf = useCallback(
+    (id: UniqueIdentifier) => {
+      const e = items.find((x) => x.url === id);
+      return e?.title || String(id);
+    },
+    [items],
+  );
+  const posOf = useCallback((id: UniqueIdentifier) => items.findIndex((x) => x.url === id) + 1, [items]);
+
+  const announcements: Announcements = useMemo(
+    () => ({
+      onDragStart: ({ active }) => `«${nameOf(active.id)}» взята`,
+      onDragOver: ({ over }) => (over ? `позиция ${posOf(over.id)} из ${items.length}` : undefined),
+      onDragEnd: ({ active, over }) =>
+        over ? `«${nameOf(active.id)}»: позиция ${posOf(over.id)} из ${items.length}` : undefined,
+      onDragCancel: ({ active }) => `«${nameOf(active.id)}» осталась на месте`,
+    }),
+    [nameOf, posOf, items.length],
+  );
 
   useEffect(() => {
     if (!searchable) return;
@@ -109,25 +197,44 @@ function Library({
     return () => window.removeEventListener("keydown", onKey);
   }, [searchable]);
 
-  const { drag, onPointerDown, registerCard, setPreviewEl, consumeClickSuppression } = useLibraryDrag({
-    items,
-    gridRef,
-    onReorder,
-    onCommit: onReorderCommit,
-  });
+  const onDragStart = useCallback(
+    ({ active }: DragStartEvent) => {
+      setActive(items.find((e) => e.url === active.id) ?? null);
+      document.body.classList.add("is-dragging");
+    },
+    [items],
+  );
+
+  const onDragEnd = useCallback(
+    ({ active, over }: DragEndEvent) => {
+      document.body.classList.remove("is-dragging");
+      setActive(null);
+      if (!over || over.id === active.id) return;
+      const from = items.findIndex((e) => e.url === active.id);
+      const to = items.findIndex((e) => e.url === over.id);
+      if (from < 0 || to < 0) return;
+      dropped.current = true;
+      onReorder(arrayMove(items, from, to));
+    },
+    [items, onReorder],
+  );
+
+  const onDragCancel = useCallback(() => {
+    document.body.classList.remove("is-dragging");
+    setActive(null);
+  }, []);
+
+  useEffect(() => () => document.body.classList.remove("is-dragging"), []);
 
   const move = useCallback(
     (entry: Entry, step: number) => {
       const from = items.findIndex((e) => e.url === entry.url);
       const to = from + step;
       if (from < 0 || to < 0 || to >= items.length) return;
-      const next = [...items];
-      next.splice(to, 0, next.splice(from, 1)[0]!);
-      onReorder(next);
-      onReorderCommit(next);
+      onReorder(arrayMove(items, from, to));
       setStatus(`${entry.title || entry.url}: позиция ${to + 1} из ${items.length}`);
     },
-    [items, onReorder, onReorderCommit],
+    [items, onReorder],
   );
 
   const onCardKeyDown = useCallback(
@@ -212,43 +319,44 @@ function Library({
         <p className="hint nothing">Ничего не нашлось по запросу «{query.trim()}»</p>
       )}
 
-      <div className={`grid${searchable ? " tight" : ""}`} ref={gridRef}>
-        {shown.map((e) => (
-          <motion.div
-            key={e.url}
-            ref={registerCard(e.url)}
-            layout="position"
-            transition={{ layout: LAYOUT_SPRING }}
-            className={`card${drag?.item.url === e.url ? " placeholder" : ""}`}
-            role="button"
-            tabIndex={0}
-            aria-keyshortcuts={MOVE_KEYS}
-            onPointerDown={(ev) => {
-              if (!filtering) onPointerDown(ev, e);
-            }}
-            onClick={() => {
-              if (!consumeClickSuppression()) onOpen(e);
-            }}
-            onKeyDown={(ev) => onCardKeyDown(ev, e)}
-          >
-            <CardBody entry={e} onRemove={onRemove} />
-          </motion.div>
-        ))}
-      </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        accessibility={{ announcements }}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={onDragCancel}
+      >
+        <SortableContext items={shown.map((e) => e.url)} strategy={rectSortingStrategy} disabled={filtering}>
+          <div className={`grid${searchable ? " tight" : ""}`} ref={gridRef}>
+            {shown.map((e) => (
+              <SortableCard
+                key={e.url}
+                entry={e}
+                disabled={filtering}
+                layoutKey={layoutKey.current}
+                onOpen={onOpen}
+                onRemove={onRemove}
+                onKeyDown={onCardKeyDown}
+              />
+            ))}
+          </div>
+        </SortableContext>
+        {createPortal(
+          <DragOverlay dropAnimation={DROP} className="drag-preview">
+            {active && (
+              <div className="card floating">
+                <CardBody entry={active} />
+              </div>
+            )}
+          </DragOverlay>,
+          document.body,
+        )}
+      </DndContext>
 
       <div className="sr-only" role="status" aria-live="polite">
         {status}
       </div>
-
-      {drag &&
-        createPortal(
-          <div ref={setPreviewEl} className="drag-preview" style={{ width: drag.width }} aria-hidden>
-            <div className="card floating">
-              <CardBody entry={drag.item} />
-            </div>
-          </div>,
-          document.body,
-        )}
     </>
   );
 }

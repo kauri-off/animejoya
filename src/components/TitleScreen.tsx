@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { media, rank, type Episode, type Progress, type Title } from "../api";
-import { Check, CheckAll, Download, Next, Play, Prev, Trash, X, Zap } from "../icons";
+import { Check, CheckCheck, Download, Play, SkipBack, SkipForward, Trash2, X, Zap } from "lucide-react";
 
 const Watch = lazy(() => import("./Watch"));
 
@@ -208,7 +208,7 @@ export default function TitleScreen({
                   disabled={!watching}
                   onClick={() => watching && setWatching(watching - 1)}
                 >
-                  <Prev size={14} />
+                  <SkipBack size={14} />
                 </button>
                 <div className="label">
                   {playing.title}
@@ -220,7 +220,7 @@ export default function TitleScreen({
                   disabled={watching === null || watching + 1 >= episodes.length}
                   onClick={() => watching !== null && setWatching(watching + 1)}
                 >
-                  <Next size={14} />
+                  <SkipForward size={14} />
                 </button>
               </div>
 
@@ -254,7 +254,7 @@ export default function TitleScreen({
                 disabled={pending}
                 onClick={() => (watching === upNext ? theater.current?.scrollIntoView({ behavior: "smooth" }) : watch(upNext))}
               >
-                <Play size={14} />
+                <Play size={14} fill="currentColor" strokeWidth={0} />
                 {finished ? "Пересмотреть" : lastSeen < 0 ? "Смотреть" : "Продолжить"}
                 <span className="what">{episodes[upNext].title}</span>
               </button>
@@ -401,7 +401,7 @@ export default function TitleScreen({
 
             <div className="acts">
               <button className="act accent" onClick={() => watch(pick)}>
-                <Play size={13} /> Смотреть
+                <Play size={13} fill="currentColor" strokeWidth={0} /> Смотреть
               </button>
               <button className="act quiet" title="Скачать" onClick={() => actions.download(episode, active)}>
                 <Download size={14} />
@@ -412,7 +412,7 @@ export default function TitleScreen({
                   title="Убрать из кэша"
                   onClick={() => actions.dropCache(episode)}
                 >
-                  <Trash size={14} />
+                  <Trash2 size={14} />
                 </button>
               ) : (
                 <button
@@ -440,7 +440,7 @@ export default function TitleScreen({
                     setPick(null);
                   }}
                 >
-                  <CheckAll size={15} />
+                  <CheckCheck size={15} />
                 </button>
               )}
             </div>

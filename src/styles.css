@@ -354,12 +354,7 @@ body.is-dragging .card:hover .kill {
 }
 
 .drag-preview {
-  position: fixed;
-  top: 0;
-  left: 0;
   pointer-events: none;
-  z-index: 80;
-  will-change: transform;
 }
 .drag-preview .card.floating {
   pointer-events: none;
@@ -1081,6 +1076,9 @@ kbd {
   background: var(--panel-strong);
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
 }
+.sheet:focus {
+  outline: none;
+}
 .sheet h2 {
   font-size: 17px;
   font-weight: 620;
@@ -1188,19 +1186,16 @@ kbd {
 }
 
 /* — тосты — */
-.toasts {
-  position: fixed;
-  top: calc(74px + env(safe-area-inset-top));
-  width: max-content;
-  max-width: calc(100vw - 24px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 70;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  pointer-events: none;
+[data-sonner-toaster] {
+  font-family: inherit;
+}
+@media (min-width: 601px) {
+  .toast {
+    left: 50%;
+    translate: -50% 0;
+    width: max-content;
+    max-width: min(620px, calc(100vw - 24px));
+  }
 }
 .toast {
   padding: 9px 15px;
@@ -1209,16 +1204,14 @@ kbd {
   border: 1px solid var(--line);
   background: var(--panel-strong);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
-  max-width: 620px;
   text-align: center;
-  overflow-wrap: anywhere;
+  color: var(--text);
 }
 .toast:has(.toast-act) {
   display: flex;
   align-items: center;
   gap: 12px;
   padding-right: 6px;
-  pointer-events: auto;
 }
 .toast-act {
   flex: none;
@@ -1676,10 +1669,6 @@ button.name:hover {
   .dock .act.accent {
     flex: 1;
     justify-content: center;
-  }
-
-  .toasts {
-    top: calc(62px + env(safe-area-inset-top));
   }
 
   .veil {

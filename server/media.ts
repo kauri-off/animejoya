@@ -45,7 +45,8 @@ export async function serveFile(req: Request, abs: string, name: string): Promis
   }
   const [start, end] = range ?? [0, size - 1];
   if (range !== null) head["Content-Range"] = `bytes ${start}-${end}/${size}`;
-  // На HEAD Bun сам отбросит тело, оставив Content-Length.
+  // Hono отвечает на HEAD копией заголовков без тела — длину задаём сами, иначе будет 0.
+  head["Content-Length"] = String(end - start + 1);
   return new Response(file.slice(start, end + 1), { status: range ? 206 : 200, headers: head });
 }
 

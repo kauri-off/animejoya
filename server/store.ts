@@ -1,29 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-export type Fact = { key: string; value: string };
-
-export type Settings = {
-  username: string;
-  password: string;
-  preloadNext: boolean;
-};
-
-export type Entry = {
-  url: string;
-  title: string;
-  original: string;
-  poster: string;
-  description: string;
-  genres: string[];
-  facts: Fact[];
-  watched: string[];
-  lastPlayer: string | null;
-  lastQuality: string | null;
-  total: number;
-  addedAt: number;
-};
+import type { z } from "zod";
+import { Entry, Settings } from "./schema.ts";
 
 const DEFAULTS: Settings = {
   username: "",
@@ -42,16 +21,31 @@ export function configDir(): string {
   return dir;
 }
 
-function readJson<T>(file: string, fallback: T): T {
+function readJson(file: string): unknown {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+    return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
-    return fallback;
+    return undefined;
   }
 }
 
-function writeJson(file: string, value: unknown): void {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+/// Через временный файл: оборванная запись не должна съесть библиотеку.
+function writeJson(file: string, value: unknown, mode?: number): void {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode });
+  fs.renameSync(tmp, file);
+}
+
+/// Поля проверяем по одному: битое значение откатывается к умолчанию, а лишние ключи
+/// вроде `video_dir` из старых конфигов просто отбрасываются.
+function lenient<S extends z.ZodObject>(schema: S, raw: unknown, base: z.infer<S>): z.infer<S> {
+  const src = (raw !== null && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, field] of Object.entries(schema.shape)) {
+    const r = field.safeParse(src[key]);
+    if (r.success) out[key] = r.data;
+  }
+  return out as z.infer<S>;
 }
 
 export const now = (): number => Math.floor(Date.now() / 1000);
@@ -73,54 +67,31 @@ export function blank(url: string, title = ""): Entry {
   };
 }
 
-/// Берём только известные поля: в старых конфигах встречается мусор вроде `video_dir`,
-/// и serde его отбрасывал — держим то же поведение.
-function pickSettings(raw: Partial<Settings>): Settings {
-  return {
-    username: raw.username ?? DEFAULTS.username,
-    password: raw.password ?? DEFAULTS.password,
-    preloadNext: raw.preloadNext ?? DEFAULTS.preloadNext,
-  };
-}
-
-export function pickEntry(raw: Partial<Entry>): Entry {
-  const base = blank(raw.url ?? "");
-  return {
-    ...base,
-    ...pickDefined(raw, base),
-  };
-}
-
-function pickDefined(raw: Partial<Entry>, base: Entry): Partial<Entry> {
-  const out: Partial<Entry> = {};
-  for (const k of Object.keys(base) as (keyof Entry)[]) {
-    if (raw[k] !== undefined && raw[k] !== null) (out as Record<string, unknown>)[k] = raw[k];
-  }
-  return out;
-}
+const settingsPath = (): string => path.join(configDir(), "config.json");
+const libraryPath = (): string => path.join(configDir(), "library.json");
 
 export function loadSettings(): Settings {
-  return pickSettings(readJson<Partial<Settings>>(path.join(configDir(), "config.json"), {}));
+  return lenient(Settings, readJson(settingsPath()), DEFAULTS);
 }
 
 export function saveSettings(s: Settings): void {
-  const file = path.join(configDir(), "config.json");
-  writeJson(file, s);
-  if (process.platform !== "win32") {
-    try {
-      fs.chmodSync(file, 0o600);
-    } catch {}
-  }
+  writeJson(settingsPath(), s, 0o600);
 }
 
-const libraryPath = (): string => path.join(configDir(), "library.json");
+const toEntry = (raw: unknown): Entry | null => {
+  const url = (raw as { url?: unknown } | null)?.url;
+  return typeof url === "string" ? lenient(Entry, raw, blank(url)) : null;
+};
 
 /// Первый запуск после CLI-версии: подхватываем старый links.json.
 export function loadLibrary(): Entry[] {
   const file = libraryPath();
-  if (fs.existsSync(file)) return readJson<Partial<Entry>[]>(file, []).map(pickEntry);
-  const old = readJson<{ url: string; title?: string }[]>(path.join(configDir(), "links.json"), []);
-  return old.map((l) => blank(l.url, l.title ?? ""));
+  if (fs.existsSync(file)) {
+    const raw = readJson(file);
+    return (Array.isArray(raw) ? raw : []).map(toEntry).filter((e) => e !== null);
+  }
+  const old = readJson(path.join(configDir(), "links.json"));
+  return (Array.isArray(old) ? old : []).map(toEntry).filter((e) => e !== null);
 }
 
 export function saveLibrary(items: Entry[]): void {

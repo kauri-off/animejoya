@@ -1,11 +1,11 @@
 import * as cheerio from "cheerio";
+import makeFetchCookie from "fetch-cookie";
 import type { AnyNode } from "domhandler";
-import type { Fact } from "./store.ts";
+import { msg, type Fact, type Source } from "./schema.ts";
 
 export const SIBNET = "https://video.sibnet.ru";
 export const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
 
-export type Source = { quality: string; url: string; referer: string };
 export type Episode = { playerId: string; title: string; sources: Source[]; embed: string };
 export type Player = { id: string; name: string };
 export type Choice = { id: string; path: string[]; resolvable: boolean };
@@ -52,88 +52,39 @@ const BASE_HEADERS: Record<string, string> = {
   "Upgrade-Insecure-Requests": "1",
 };
 
-/// Минимальная банка кук: сайт один, поэтому хватает пары имя-значение на хост.
-class Jar {
-  private byHost = new Map<string, Map<string, string>>();
-
-  read(url: string): string {
-    const jar = this.byHost.get(new URL(url).hostname);
-    if (!jar || jar.size === 0) return "";
-    return [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-
-  write(url: string, res: Response): void {
-    const set = res.headers.getSetCookie();
-    if (set.length === 0) return;
-    const host = new URL(url).hostname;
-    const jar = this.byHost.get(host) ?? new Map<string, string>();
-    for (const line of set) {
-      const pair = line.split(";")[0] ?? "";
-      const i = pair.indexOf("=");
-      if (i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
-    }
-    this.byHost.set(host, jar);
-  }
-}
-
-type Init = { method?: string; headers: Record<string, string>; body?: string };
-
-/// Редиректы ведём вручную: иначе куки, выставленные на промежуточном 302
-/// (а именно так приходит сессия после логина), до нас не доедут.
-async function hop(start: string, init: Init, jar: Jar, timeoutMs: number): Promise<Response> {
-  let url = start;
-  let opts = { ...init };
-  for (let n = 0; n < 10; n++) {
-    const cookie = jar.read(url);
-    const headers = { ...BASE_HEADERS, ...opts.headers, ...(cookie ? { Cookie: cookie } : {}) };
-    const res = await fetch(url, {
-      method: opts.method ?? "GET",
-      headers,
-      body: opts.body,
-      redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    jar.write(url, res);
-    const loc = res.headers.get("location");
-    if (res.status >= 300 && res.status < 400 && loc) {
-      const next = new URL(loc, url).toString();
-      await res.body?.cancel();
-      if (res.status === 303 || (opts.method === "POST" && res.status !== 307 && res.status !== 308)) {
-        opts = { headers: opts.headers };
-      }
-      url = next;
-      continue;
-    }
-    return res;
-  }
-  throw new Error("слишком много редиректов");
-}
+type Init = { headers: Record<string, string>; method?: string; body?: string };
 
 export class Site {
-  private jar = new Jar();
+  /// Куки сессии приходят на промежуточном 302 после логина — fetch-cookie ловит их на каждом шаге.
+  private fetch = makeFetchCookie(fetch);
+
+  private async request(url: string, init: Init, what: string): Promise<Response> {
+    try {
+      return await this.fetch(url, {
+        ...init,
+        headers: { ...BASE_HEADERS, ...init.headers },
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch (e) {
+      throw new Error(`${what}: ${msg(e)}`);
+    }
+  }
 
   /// GET страницы «как из браузера».
   async getPage(url: string): Promise<string> {
-    let res: Response;
-    try {
-      res = await hop(
-        url,
-        {
-          headers: {
-            Accept:
-              "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-          },
+    const res = await this.request(
+      url,
+      {
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "none",
+          "Sec-Fetch-User": "?1",
         },
-        this.jar,
-        60_000,
-      );
-    } catch (e) {
-      throw new Error(`не удалось открыть ${url}: ${e instanceof Error ? e.message : e}`);
-    }
+      },
+      `не удалось открыть ${url}`,
+    );
     // Страница без прав доступа отдаётся с кодом 403, но с нужным HTML.
     return res.text();
   }
@@ -145,30 +96,24 @@ export class Site {
       login_not_save: "0",
       login: "submit",
     });
-    let res: Response;
-    try {
-      res = await hop(
-        referer,
-        {
-          method: "POST",
-          headers: {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Content-Type": "application/x-www-form-urlencoded",
-            Origin: originOf(referer),
-            Referer: referer,
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-User": "?1",
-          },
-          body: form.toString(),
+    const res = await this.request(
+      referer,
+      {
+        method: "POST",
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: originOf(referer),
+          Referer: referer,
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "same-origin",
+          "Sec-Fetch-User": "?1",
         },
-        this.jar,
-        60_000,
-      );
-    } catch (e) {
-      throw new Error(`запрос авторизации не прошёл: ${e instanceof Error ? e.message : e}`);
-    }
+        body: form.toString(),
+      },
+      "запрос авторизации не прошёл",
+    );
     const body = await res.text();
     if (body.includes('name="login_name"')) {
       throw new Error("не удалось войти — проверьте логин и пароль");
@@ -177,25 +122,19 @@ export class Site {
 
   /// Страница чужого плеера — берём её так, как её брал бы iframe на сайте.
   private async embedPage(url: string, from: string): Promise<string> {
-    let res: Response;
-    try {
-      res = await hop(
-        url,
-        {
-          headers: {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            Referer: `${from}/`,
-            "Sec-Fetch-Dest": "iframe",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "cross-site",
-          },
+    const res = await this.request(
+      url,
+      {
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Referer: `${from}/`,
+          "Sec-Fetch-Dest": "iframe",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "cross-site",
         },
-        this.jar,
-        60_000,
-      );
-    } catch (e) {
-      throw new Error(`не удалось открыть плеер ${url}: ${e instanceof Error ? e.message : e}`);
-    }
+      },
+      `не удалось открыть плеер ${url}`,
+    );
     return res.text();
   }
 
@@ -242,26 +181,20 @@ export class Site {
   /// Плейлист приходит отдельным ajax-запросом, в HTML страницы его нет.
   async playlist(newsId: string, referer: string): Promise<Playlist> {
     const url = `${originOf(referer)}/engine/ajax/playlists.php?news_id=${newsId}&xfield=playlist`;
-    let res: Response;
-    try {
-      res = await hop(
-        url,
-        {
-          headers: {
-            Accept: "application/json, text/javascript, */*; q=0.01",
-            "X-Requested-With": "XMLHttpRequest",
-            Referer: referer,
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-          },
+    const res = await this.request(
+      url,
+      {
+        headers: {
+          Accept: "application/json, text/javascript, */*; q=0.01",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: referer,
+          "Sec-Fetch-Dest": "empty",
+          "Sec-Fetch-Mode": "cors",
+          "Sec-Fetch-Site": "same-origin",
         },
-        this.jar,
-        60_000,
-      );
-    } catch (e) {
-      throw new Error(`не удалось получить плейлист: ${e instanceof Error ? e.message : e}`);
-    }
+      },
+      "не удалось получить плейлист",
+    );
     let json: { success?: boolean; response?: string };
     try {
       json = (await res.json()) as typeof json;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Download, RotateCw, Trash2 } from "lucide-react";
 import {
   api,
   bytes,
@@ -11,7 +12,7 @@ import {
   type CacheTitle,
   type Progress,
 } from "../api";
-import { Download, Refresh, Trash } from "../icons";
+import { notify, warn } from "../toast";
 
 const HOUR = 3_600_000;
 const spring = { type: "spring" as const, stiffness: 420, damping: 34 };
@@ -27,11 +28,9 @@ function left(ms: number): string {
 export default function Cache({
   jobs,
   onOpen,
-  toast,
 }: {
   jobs: Record<string, Progress>;
   onOpen: (url: string) => void;
-  toast: (text: string, bad?: boolean) => void;
 }) {
   const [info, setInfo] = useState<CacheInfo | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -39,17 +38,15 @@ export default function Cache({
   const disarm = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const reload = useCallback(() => {
-    api.cacheList().then(setInfo, (e) => toast(String(e), true));
-  }, [toast]);
+    api.cacheList().then(setInfo, warn);
+  }, []);
 
   const running = Object.keys(jobs).sort().join("\n");
   useEffect(reload, [reload, running]);
 
   useEffect(() => {
-    const uns = [on.dropped(reload), on.done(reload)];
-    return () => {
-      uns.forEach((u) => u.then((f) => f()));
-    };
+    const uns = [on("cache:dropped", reload), on("preload:done", reload)];
+    return () => uns.forEach((u) => u());
   }, [reload]);
 
   useEffect(() => () => clearTimeout(disarm.current), []);
@@ -66,7 +63,7 @@ export default function Cache({
     (key: string, task: () => Promise<unknown>) => {
       setPending((p) => new Set(p).add(key));
       task()
-        .catch((e) => toast(String(e), true))
+        .catch(warn)
         .finally(() => {
           setPending((p) => {
             const next = new Set(p);
@@ -76,7 +73,7 @@ export default function Cache({
           reload();
         });
     },
-    [toast, reload],
+    [reload],
   );
 
   const clearAll = () => {
@@ -87,7 +84,7 @@ export default function Cache({
       return;
     }
     setArmed(false);
-    run("*", () => api.cacheClear().then(() => toast("Кэш очищен")));
+    run("*", () => api.cacheClear().then(() => notify("Кэш очищен")));
   };
 
   if (info === null) {
@@ -129,14 +126,14 @@ export default function Cache({
             disabled={files === 0 || pending.has("sweep")}
             onClick={() => run("sweep", () => api.cacheSweep().then(setInfo))}
           >
-            <Refresh size={14} /> Убрать устаревшее
+            <RotateCw size={14} /> Убрать устаревшее
           </button>
           <button
             className={`act danger${armed ? " armed" : ""}`}
             disabled={files === 0 || pending.has("*")}
             onClick={clearAll}
           >
-            <Trash size={14} /> {armed ? "Точно очистить?" : "Очистить всё"}
+            <Trash2 size={14} /> {armed ? "Точно очистить?" : "Очистить всё"}
           </button>
         </div>
       </div>
@@ -215,7 +212,7 @@ function TitleBlock({
           </div>
         </div>
         <button className="act quiet danger" disabled={busy} onClick={onDropTitle} title="Удалить все серии тайтла">
-          <Trash size={14} /> <span className="wide">Удалить всё</span>
+          <Trash2 size={14} /> <span className="wide">Удалить всё</span>
         </button>
       </div>
 
@@ -289,7 +286,7 @@ function FileRow({
         title={job ? "Остановить и удалить" : "Удалить"}
         onClick={onDrop}
       >
-        <Trash size={14} />
+        <Trash2 size={14} />
       </button>
       {job && (
         <div className="track">

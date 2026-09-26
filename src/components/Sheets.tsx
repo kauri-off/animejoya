@@ -1,29 +1,55 @@
 import { useState } from "react";
 import { motion } from "motion/react";
+import * as Dialog from "@radix-ui/react-dialog";
 import type { Settings } from "../api";
 
 const spring = { type: "spring" as const, stiffness: 460, damping: 36 };
 
-function Veil({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+// Поля сами не фокусируем, чтобы на телефоне не выезжала клавиатура; кому надо — ставит autoFocus.
+const focusSheet = (e: Event) => {
+  e.preventDefault();
+  (e.currentTarget as HTMLElement).focus();
+};
+
+function Veil({
+  title,
+  sub,
+  onClose,
+  children,
+}: {
+  title: string;
+  sub: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <motion.div
-      className="veil"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.18 }}
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <motion.div
-        className="sheet"
-        initial={{ opacity: 0, y: 22, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 12, scale: 0.97, transition: { duration: 0.15 } }}
-        transition={spring}
-      >
-        {children}
-      </motion.div>
-    </motion.div>
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay asChild>
+          <motion.div
+            className="veil"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+          >
+            <Dialog.Content asChild onOpenAutoFocus={focusSheet}>
+              <motion.div
+                className="sheet"
+                initial={{ opacity: 0, y: 22, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 12, scale: 0.97, transition: { duration: 0.15 } }}
+                transition={spring}
+              >
+                <Dialog.Title>{title}</Dialog.Title>
+                <Dialog.Description className="sub">{sub}</Dialog.Description>
+                {children}
+              </motion.div>
+            </Dialog.Content>
+          </motion.div>
+        </Dialog.Overlay>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -44,12 +70,11 @@ export function AddSheet({
 }) {
   const [url, setUrl] = useState(initial);
   return (
-    <Veil onClose={onClose}>
-      <h2>Новый тайтл</h2>
-      <p className="sub">
-        Откройте тайтл на animejoya.ru, скопируйте адрес страницы и вставьте сюда. Подойдут и
-        зеркала сайта.
-      </p>
+    <Veil
+      title="Новый тайтл"
+      sub="Откройте тайтл на animejoya.ru, скопируйте адрес страницы и вставьте сюда. Подойдут и зеркала сайта."
+      onClose={onClose}
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -100,9 +125,7 @@ export function SettingsSheet({
   const [s, setS] = useState(value);
   const set = (patch: Partial<Settings>) => setS((old) => ({ ...old, ...patch }));
   return (
-    <Veil onClose={onClose}>
-      <h2>Настройки</h2>
-      <p className="sub">Логин нужен, чтобы сайт отдал плейлист</p>
+    <Veil title="Настройки" sub="Логин нужен, чтобы сайт отдал плейлист" onClose={onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -165,9 +188,11 @@ const SHORTCUTS: [string, [string[], string][]][] = [
 
 export function HelpSheet({ onClose }: { onClose: () => void }) {
   return (
-    <Veil onClose={onClose}>
-      <h2>Горячие клавиши</h2>
-      <p className="sub">Двойной клик по серии сразу запускает её, серия отмечается просмотренной ближе к концу</p>
+    <Veil
+      title="Горячие клавиши"
+      sub="Двойной клик по серии сразу запускает её, серия отмечается просмотренной ближе к концу"
+      onClose={onClose}
+    >
       {SHORTCUTS.map(([group, keys]) => (
         <div className="keys" key={group}>
           <h3>{group}</h3>

@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { msg } from "./schema.ts";
 import { UA } from "./site.ts";
 
-export type Progress = { id: string; done: number; total: number; bytesPerSec: number };
 export type OnProgress = (done: number, total: number, bytesPerSec: number) => void;
 
 /// На Windows rename не перезаписывает существующий файл, в отличие от unix.
@@ -93,7 +93,7 @@ export async function fetchFile(
     res = await fetch(url, { headers, signal });
   } catch (e) {
     if (signal.aborted) throw new Error("загрузка отменена");
-    throw new Error(`не удалось начать загрузку: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`не удалось начать загрузку: ${msg(e)}`);
   }
   if (!res.ok) {
     await res.body?.cancel();
@@ -126,7 +126,7 @@ export async function fetchFile(
     }
   } catch (e) {
     if (signal.aborted) throw new Error("загрузка отменена");
-    throw new Error(`обрыв загрузки: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`обрыв загрузки: ${msg(e)}`);
   } finally {
     await out.end();
     fs.closeSync(fd);

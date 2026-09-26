@@ -1,142 +1,71 @@
-export type Fact = { key: string; value: string };
-export type Source = { quality: string; url: string; referer: string };
+import { hc, type ClientResponse } from "hono/client";
+import type { AppType } from "../server/app.ts";
+import type { Entry, Events, Settings, Source } from "../server/schema.ts";
 
-export type Entry = {
-  url: string;
-  title: string;
-  original: string;
-  poster: string;
-  description: string;
-  genres: string[];
-  facts: Fact[];
-  watched: string[];
-  lastPlayer: string | null;
-  lastQuality: string | null;
-  total: number;
-  addedAt: number;
-};
+export type {
+  CacheFile,
+  CacheInfo,
+  CacheTitle,
+  Entry,
+  Episode,
+  Player,
+  Progress,
+  Settings,
+  Source,
+  Title,
+} from "../server/schema.ts";
 
-export type Episode = { title: string; tag: string; sources: Source[]; file: string | null };
-export type Player = { id: string; path: string[]; episodes: Episode[]; resolvable: boolean };
-export type Title = { entry: Entry; players: Player[]; external: string[]; dir: string };
+const client = hc<AppType>(location.origin);
 
-export type Settings = {
-  username: string;
-  password: string;
-  preloadNext: boolean;
-};
-
-export type CacheFile = {
-  path: string;
-  tag: string;
-  quality: string;
-  size: number;
-  mtime: number;
-  partial: boolean;
-  busy: boolean;
-};
-export type CacheTitle = { slug: string; url: string | null; title: string; poster: string; size: number; files: CacheFile[] };
-export type CacheInfo = { root: string; ttl: number; limit: number; size: number; titles: CacheTitle[] };
-
-export type Progress = { id: string; done: number; total: number; bytesPerSec: number };
-
-type Reply = { ok: boolean; data?: unknown; error?: string };
-
-// Отклоняемся голой строкой, как это делал Tauri: компоненты пишут String(e) в тост.
-async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
-  let res: Response;
+// Отклоняемся голой строкой: компоненты пишут String(e) в тост.
+async function call<T>(req: Promise<ClientResponse<T, number, "json">>): Promise<T> {
+  let res: ClientResponse<T, number, "json">;
   try {
-    res = await fetch(`/api/${name}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(args),
-    });
+    res = await req;
   } catch {
     throw "нет связи с сервером AnimeJoy";
   }
-  let body: Reply;
-  try {
-    body = (await res.json()) as Reply;
-  } catch {
-    throw `сервер ответил ${res.status}`;
-  }
-  if (!body.ok) throw body.error ?? `сервер ответил ${res.status}`;
-  return body.data as T;
+  const body: unknown = await res.json().catch(() => undefined);
+  if (!res.ok) throw (body as { error?: string } | undefined)?.error ?? `сервер ответил ${res.status}`;
+  return body as T;
 }
 
+const { api: r } = client;
+
 export const api = {
-  settingsGet: () => call<Settings>("settings_get"),
-  settingsSet: (settings: Settings) => call<void>("settings_set", { settings }),
-  libraryGet: () => call<Entry[]>("library_get"),
-  libraryAdd: (url: string) => call<Entry>("library_add", { url }),
-  librarySync: (force: boolean) => call<void>("library_sync", { force }),
-  libraryRemove: (url: string) => call<void>("library_remove", { url }),
-  libraryRestore: (entry: Entry, index: number) => call<Entry[]>("library_restore", { entry, index }),
-  libraryReorder: (urls: string[]) => call<Entry[]>("library_reorder", { urls }),
-  titleOpen: (url: string) => call<Title>("title_open", { url }),
-  playerResolve: (url: string, playerId: string) =>
-    call<Episode[]>("player_resolve", { url, playerId }),
+  settingsGet: () => call(r.settings.$get()),
+  settingsSet: (settings: Settings) => call(r.settings.$put({ json: settings })),
+  libraryGet: () => call(r.library.$get()),
+  libraryAdd: (url: string) => call(r.library.add.$post({ json: { url } })),
+  librarySync: (force: boolean) => call(r.library.sync.$post({ json: { force } })),
+  libraryRemove: (url: string) => call(r.library.remove.$post({ json: { url } })),
+  libraryRestore: (entry: Entry, index: number) => call(r.library.restore.$post({ json: { entry, index } })),
+  libraryReorder: (urls: string[]) => call(r.library.reorder.$post({ json: { urls } })),
+  titleOpen: (url: string) => call(r.title.$get({ query: { url } })),
+  playerResolve: (url: string, playerId: string) => call(r.title.resolve.$post({ json: { url, playerId } })),
   rememberChoice: (url: string, player?: string, quality?: string) =>
-    call<void>("remember_choice", { url, player, quality }),
+    call(r.title.remember.$post({ json: { url, player, quality } })),
   markWatched: (url: string, episodes: string[], watched: boolean) =>
-    call<string[]>("mark_watched", { url, episodes, watched }),
-  preloadStart: (a: {
-    pageUrl: string;
-    episode: string;
-    quality: string;
-    sourceUrl: string;
-    referer: string;
-  }) => call<string>("preload_start", a),
-  preloadCancel: (id: string) => call<void>("preload_cancel", { id }),
-  cacheList: () => call<CacheInfo>("cache_list"),
-  cacheDrop: (path: string) => call<void>("cache_drop", { path }),
-  cacheDropTitle: (slug: string) => call<void>("cache_drop_title", { slug }),
-  cacheClear: () => call<void>("cache_clear"),
-  cacheSweep: () => call<CacheInfo>("cache_sweep"),
+    call(r.title.watched.$post({ json: { url, episodes, watched } })),
+  preloadStart: (a: { pageUrl: string; episode: string; quality: string; sourceUrl: string; referer: string }) =>
+    call(r.preload.$post({ json: a })),
+  preloadCancel: (id: string) => call(r.preload.cancel.$post({ json: { id } })),
+  cacheList: () => call(r.cache.$get()),
+  cacheDrop: (path: string) => call(r.cache.drop.$post({ json: { path } })),
+  cacheDropTitle: (slug: string) => call(r.cache["drop-title"].$post({ json: { slug } })),
+  cacheClear: () => call(r.cache.clear.$post()),
+  cacheSweep: () => call(r.cache.sweep.$post()),
 };
 
-type Handler = (payload: never) => void;
-
-const handlers = new Map<string, Set<Handler>>();
 let stream: EventSource | null = null;
 
 // EventSource сам переподключается, поэтому поток поднимаем один раз на страницу.
-function ensure(): void {
-  if (stream !== null) return;
-  stream = new EventSource("/api/events");
-  stream.onmessage = (ev) => {
-    let parsed: { event: string; payload: never };
-    try {
-      parsed = JSON.parse(ev.data);
-    } catch {
-      return;
-    }
-    handlers.get(parsed.event)?.forEach((h) => h(parsed.payload));
-  };
+export function on<K extends keyof Events>(event: K, cb: (payload: Events[K]) => void): () => void {
+  stream ??= new EventSource("/api/events");
+  const handler = (ev: MessageEvent<string>) => cb(JSON.parse(ev.data) as Events[K]);
+  stream.addEventListener(event, handler);
+  return () => stream?.removeEventListener(event, handler);
 }
-
-function listen<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
-  ensure();
-  const set = handlers.get(event) ?? new Set<Handler>();
-  set.add(cb as Handler);
-  handlers.set(event, set);
-  return Promise.resolve(() => {
-    set.delete(cb as Handler);
-  });
-}
-
-export const on = {
-  progress: (f: (p: Progress) => void) => listen<Progress>("preload:progress", f),
-  done: (f: (p: { id: string; file: string }) => void) =>
-    listen<{ id: string; file: string }>("preload:done", f),
-  failed: (f: (p: { id: string; message: string }) => void) =>
-    listen<{ id: string; message: string }>("preload:failed", f),
-  entry: (f: (e: Entry) => void) => listen<Entry>("library:entry", f),
-  syncing: (f: (n: number) => void) => listen<number>("library:syncing", f),
-  synced: (f: (r: { total: number; failed: number }) => void) =>
-    listen<{ total: number; failed: number }>("library:synced", f),
-  dropped: (f: (files: string[]) => void) => listen<string[]>("cache:dropped", f),
-};
 
 export function bytes(n: number): string {
   if (n < 1024) return `${n} Б`;
@@ -154,13 +83,13 @@ export function rank(quality: string): number {
   return parseInt(quality, 10) || 0;
 }
 
-const nameParam = (name?: string) => (name ? `&name=${encodeURIComponent(name)}` : "");
+const local = (u: URL): string => u.pathname + u.search;
 
 // С `name` сервер отдаёт файл как вложение, и его забирает менеджер загрузок браузера.
 export const media = {
-  file: (file: string, name?: string) => `/media/file?path=${encodeURIComponent(file)}${nameParam(name)}`,
+  file: (path: string, name?: string) => local(client.media.file.$url({ query: { path, name } })),
   remote: (s: Source, name?: string) =>
-    `/media/remote?url=${encodeURIComponent(s.url)}&referer=${encodeURIComponent(s.referer)}${nameParam(name)}`,
+    local(client.media.remote.$url({ query: { url: s.url, referer: s.referer, name } })),
 };
 
 export function saveAs(url: string): void {
