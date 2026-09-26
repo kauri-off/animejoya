@@ -45,6 +45,7 @@ const jobs = new Map<string, Job>();
 const playlists = new Map<string, Playlist>();
 const fetchedAt = new Map<string, number>();
 const FRESH_MS = 5 * 60_000;
+let syncing = false;
 
 const clients = new Set<ReadableStreamDefaultController<string>>();
 
@@ -88,7 +89,7 @@ function merge(entry: Entry, meta: Meta): void {
 }
 
 /// Кладёт свежие метаданные в библиотеку, добавляя запись при первой встрече.
-function upsert(url: string, meta: Meta): Entry {
+function upsert(url: string, meta: Meta, total = 0): Entry {
   let entry = library.find((e) => e.url === url);
   if (entry === undefined) {
     entry = store.blank(url);
@@ -97,8 +98,21 @@ function upsert(url: string, meta: Meta): Entry {
   } else {
     merge(entry, meta);
   }
+  if (total > 0) entry.total = total;
   store.saveLibrary(library);
   return { ...entry };
+}
+
+const totalOf = (playlist: Playlist): number =>
+  new Set(playlist.playable().flatMap((c) => playlist.episodesOf(c.id).map((e) => store.epTag(e.title)))).size;
+
+/// Тянет страницу и плейлист заново; `add` — завести запись, если её нет в библиотеке.
+async function refresh(url: string, add: boolean): Promise<Entry | null> {
+  const fresh = await fetchTitle(url);
+  playlists.set(url, fresh.playlist);
+  fetchedAt.set(url, Date.now());
+  if (!add && !library.some((e) => e.url === url)) return null;
+  return upsert(url, parseMeta(fresh.html), totalOf(fresh.playlist));
 }
 
 function episodeView(e: Episode, dir: string): EpisodeView {
@@ -246,18 +260,27 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     return upsert(target, parseMeta(await page(target)));
   },
 
-  /// Догружает обложки и описания для записей, где их ещё нет.
+  /// Обновляет записи без обложек, а с `force` — всю библиотеку; итог приходит событием `library:synced`.
   library_sync: async ({ force }) => {
+    if (syncing) return;
     const todo = library.filter((e) => force || e.poster === "").map((e) => e.url);
     if (todo.length === 0) return;
+    syncing = true;
     void (async () => {
-      emit("library:syncing", todo.length);
-      for (const url of todo) {
+      let left = todo.length;
+      emit("library:syncing", left);
+      const run = async (url: string): Promise<void> => {
         try {
-          emit("library:entry", upsert(url, parseMeta(await page(url))));
-        } catch {}
-      }
-      emit("library:syncing", 0);
+          const entry = await refresh(url, false);
+          if (entry !== null) emit("library:entry", entry);
+        } finally {
+          emit("library:syncing", --left);
+        }
+      };
+      // Первый тайтл отдельно, чтобы вход на сайт случился один раз, а не в каждом потоке.
+      const results = [...(await mapLimit(todo.slice(0, 1), 1, run)), ...(await mapLimit(todo.slice(1), 3, run))];
+      syncing = false;
+      emit("library:synced", { total: todo.length, failed: results.filter((r) => r.status === "rejected").length });
     })();
   },
 
@@ -303,11 +326,8 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
     let playlist = playlists.get(target);
     let entry = library.find((e) => e.url === target);
     if (playlist === undefined || entry === undefined || Date.now() - (fetchedAt.get(target) ?? 0) > FRESH_MS) {
-      const fresh = await fetchTitle(target);
-      playlist = fresh.playlist;
-      playlists.set(target, playlist);
-      fetchedAt.set(target, Date.now());
-      entry = upsert(target, parseMeta(fresh.html));
+      entry = (await refresh(target, true))!;
+      playlist = playlists.get(target)!;
     } else {
       entry = { ...entry };
     }
@@ -321,13 +341,6 @@ const handlers: Record<string, (a: Args) => Promise<unknown>> = {
       episodes: playlist.episodesOf(c.id).map((e) => episodeView(e, dir)),
     }));
     const external = playlist.externalNames();
-
-    const tags = new Set(players.flatMap((p) => p.episodes.map((e) => e.tag)));
-    const stored = library.find((e) => e.url === target);
-    if (stored !== undefined && tags.size > 0 && stored.total !== tags.size) {
-      stored.total = entry.total = tags.size;
-      store.saveLibrary(library);
-    }
     return { entry, players, external, dir };
   },
 

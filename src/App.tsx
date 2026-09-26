@@ -59,6 +59,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [syncing, setSyncing] = useState(0);
   const [cacheOpen, setCacheOpen] = useState(false);
+  const manualSync = useRef(false);
   const cacheRef = useRef(cacheOpen);
   cacheRef.current = cacheOpen;
   const seq = useRef(0);
@@ -114,6 +115,11 @@ export default function App() {
         setLibrary((lib) => lib.map((e) => (e.url === entry.url ? entry : e))),
       ),
       on.syncing(setSyncing),
+      on.synced(({ total, failed }) => {
+        if (failed > 0) toast(`Не удалось обновить ${failed} из ${total}`, true);
+        else if (manualSync.current) toast(`Обновлено тайтлов: ${total}`);
+        manualSync.current = false;
+      }),
       on.dropped((files) => setOpen((t) => (t ? files.reduce(dropFile, t) : t))),
     ];
     return () => {
@@ -226,6 +232,11 @@ export default function App() {
     setAddError(null);
     setSheet("add");
   }, []);
+
+  const syncAll = useCallback(() => {
+    manualSync.current = true;
+    api.librarySync(true).catch(fail);
+  }, [fail]);
 
   const add = useCallback(
     async (url: string) => {
@@ -376,8 +387,13 @@ export default function App() {
         )}
         {!open && !cacheOpen && syncing > 0 && (
           <div className="sync">
-            <span className="spin" /> <span className="wide">Обложки:</span> {syncing}
+            <span className="spin" /> <span className="wide">Обновление:</span> {syncing}
           </div>
+        )}
+        {!open && !cacheOpen && syncing === 0 && library.length > 0 && (
+          <button className="ghost" title="Обновить все тайтлы" onClick={syncAll}>
+            <Refresh size={15} />
+          </button>
         )}
         {!open && !cacheOpen && (
           <button className="primary" title="Добавить по ссылке" onClick={openAdd}>

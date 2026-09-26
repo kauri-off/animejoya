@@ -133,6 +133,8 @@ export const on = {
     listen<{ id: string; message: string }>("preload:failed", f),
   entry: (f: (e: Entry) => void) => listen<Entry>("library:entry", f),
   syncing: (f: (n: number) => void) => listen<number>("library:syncing", f),
+  synced: (f: (r: { total: number; failed: number }) => void) =>
+    listen<{ total: number; failed: number }>("library:synced", f),
   dropped: (f: (files: string[]) => void) => listen<string[]>("cache:dropped", f),
 };
 
