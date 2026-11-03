@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { Router } from "wouter";
 import { navigate, useHashLocation } from "wouter/use-hash-location";
 import { LucideProvider } from "lucide-react";
+import { MotionConfig } from "motion/react";
 import App from "./App";
 import "./styles.css";
 
@@ -17,9 +18,11 @@ addEventListener("hashchange", migrate);
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <Router hook={useHashLocation}>
-      <LucideProvider size={16} strokeWidth={1.9}>
-        <App />
-      </LucideProvider>
+      <MotionConfig reducedMotion="user">
+        <LucideProvider size={16} strokeWidth={1.9}>
+          <App />
+        </LucideProvider>
+      </MotionConfig>
     </Router>
   </React.StrictMode>,
 );

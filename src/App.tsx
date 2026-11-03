@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { EASE } from "./motion";
 import { Toaster } from "sonner";
 import { useLocation, useRoute } from "wouter";
 import { ChevronLeft, ExternalLink, HardDrive, Keyboard, Plus, RotateCw, Settings as Gear } from "lucide-react";
@@ -39,11 +40,11 @@ const hostOf = (url: string) => {
   }
 };
 
+// Экран меняется сразу: старый не ждёт ухода, новый лишь коротко проявляется.
 const page = {
-  initial: { opacity: 0, y: 10 },
+  initial: { opacity: 0, y: 6 },
   animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -8 },
-  transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
+  transition: { duration: 0.16, ease: EASE },
 };
 
 export default function App() {
@@ -366,25 +367,23 @@ export default function App() {
       </header>
 
       <main className="scroll">
-        <AnimatePresence mode="wait">
-          {loading || (titleUrl !== null && title === null) ? (
-            <motion.div key="load" className="center" {...page}>
-              <span className="spin" />
-            </motion.div>
-          ) : title ? (
-            <motion.div key={title.entry.url} {...page}>
-              <TitleScreen data={title} jobs={jobs} actions={actions} preloadNext={settings?.preloadNext ?? true} />
-            </motion.div>
-          ) : cacheOpen ? (
-            <motion.div key="cache" {...page} style={{ height: "100%" }}>
-              <Cache jobs={jobs} onOpen={openTitle} />
-            </motion.div>
-          ) : (
-            <motion.div key="lib" {...page} style={{ height: "100%" }}>
-              <Library items={library} onOpen={openEntry} onRemove={removeEntry} onAdd={openAdd} onReorder={reorderLibrary} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {loading || (titleUrl !== null && title === null) ? (
+          <div key="load" className="center">
+            <span className="spin delayed" />
+          </div>
+        ) : title ? (
+          <motion.div key={title.entry.url} {...page}>
+            <TitleScreen data={title} jobs={jobs} actions={actions} preloadNext={settings?.preloadNext ?? true} />
+          </motion.div>
+        ) : cacheOpen ? (
+          <motion.div key="cache" {...page} style={{ height: "100%" }}>
+            <Cache jobs={jobs} onOpen={openTitle} />
+          </motion.div>
+        ) : (
+          <motion.div key="lib" {...page} style={{ height: "100%" }}>
+            <Library items={library} onOpen={openEntry} onRemove={removeEntry} onAdd={openAdd} onReorder={reorderLibrary} />
+          </motion.div>
+        )}
       </main>
 
       <Toaster

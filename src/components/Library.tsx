@@ -18,14 +18,18 @@ import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from "@d
 import { CSS } from "@dnd-kit/utilities";
 import { Check, Plus, Search, X } from "lucide-react";
 import type { Entry } from "../api";
+import { DROP_EASE, SPRING, skipFadeIfCached } from "../motion";
 
-const LAYOUT_SPRING = { type: "spring" as const, stiffness: 320, damping: 30, mass: 0.8 };
-const DROP = { duration: 200, easing: "cubic-bezier(0.2, 0.9, 0.3, 1)" };
+const DROP = { duration: 200, easing: DROP_EASE };
 const MOVE_KEYS = "Control+ArrowLeft Control+ArrowRight Control+ArrowUp Control+ArrowDown";
 const SEARCH_FROM = 6;
 const MOUSE_THRESHOLD = 8;
 const TOUCH_HOLD_MS = 260;
 const TOUCH_HOLD_SLOP = 10;
+
+// Каскад появления карточек — только при первом показе за сессию, дальше библиотека открывается сразу.
+let introPlayed = false;
+const INTRO_MS = 900;
 
 const norm = (s: string) => s.toLowerCase().replace(/ё/g, "е");
 
@@ -56,7 +60,7 @@ function CardBody({ entry, onRemove }: { entry: Entry; onRemove?: (e: Entry) => 
     <>
       <div className="poster">
         {entry.poster ? (
-          <img src={entry.poster} alt="" draggable={false} loading="lazy" decoding="async" />
+          <img ref={skipFadeIfCached} src={entry.poster} alt="" draggable={false} loading="lazy" decoding="async" />
         ) : (
           <div className="blank">
             <span>{(entry.title || "?").trim().charAt(0)}</span>
@@ -88,6 +92,7 @@ function CardBody({ entry, onRemove }: { entry: Entry; onRemove?: (e: Entry) => 
 
 function SortableCard({
   entry,
+  index,
   disabled,
   layoutKey,
   onOpen,
@@ -95,6 +100,7 @@ function SortableCard({
   onKeyDown,
 }: {
   entry: Entry;
+  index: number;
   disabled: boolean;
   layoutKey: unknown;
   onOpen: (e: Entry) => void;
@@ -104,10 +110,10 @@ function SortableCard({
   const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({ id: entry.url, disabled });
   return (
     // Раскладку при удалении и Ctrl+стрелках анимирует motion, во время перетаскивания — dnd-kit.
-    <motion.div layout="position" layoutDependency={layoutKey} transition={{ layout: LAYOUT_SPRING }}>
+    <motion.div layout="position" layoutDependency={layoutKey} transition={{ layout: SPRING.layout }}>
       <div
         ref={setNodeRef}
-        style={{ transform: CSS.Translate.toString(transform), transition }}
+        style={{ transform: CSS.Translate.toString(transform), transition, "--i": index } as React.CSSProperties}
         className={`card${isDragging ? " placeholder" : ""}`}
         role="button"
         tabIndex={0}
@@ -140,6 +146,14 @@ function Library({
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<Entry | null>(null);
+  const [intro, setIntro] = useState(!introPlayed);
+
+  useEffect(() => {
+    if (!intro || items.length === 0) return;
+    introPlayed = true;
+    const t = setTimeout(() => setIntro(false), INTRO_MS);
+    return () => clearTimeout(t);
+  }, [intro, items.length]);
 
   const shown = useMemo(() => {
     const q = norm(query.trim());
@@ -328,11 +342,12 @@ function Library({
         onDragCancel={onDragCancel}
       >
         <SortableContext items={shown.map((e) => e.url)} strategy={rectSortingStrategy} disabled={filtering}>
-          <div className={`grid${searchable ? " tight" : ""}`} ref={gridRef}>
-            {shown.map((e) => (
+          <div className={`grid${searchable ? " tight" : ""}${intro ? " intro" : ""}`} ref={gridRef}>
+            {shown.map((e, i) => (
               <SortableCard
                 key={e.url}
                 entry={e}
+                index={i}
                 disabled={filtering}
                 layoutKey={layoutKey.current}
                 onOpen={onOpen}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Download, RotateCw, Trash2 } from "lucide-react";
+import { SPRING } from "../motion";
 import {
   api,
   bytes,
@@ -15,7 +16,6 @@ import {
 import { notify, warn } from "../toast";
 
 const HOUR = 3_600_000;
-const spring = { type: "spring" as const, stiffness: 420, damping: 34 };
 
 const epName = (tag: string) => (/^\d+$/.test(tag) ? `${Number(tag)} серия` : tag.replace(/_+/g, " ").trim());
 
@@ -116,7 +116,7 @@ export default function Cache({
             <span>{files ? `${files} файл.` : ""}</span>
           </div>
           <div className={`track${fill > 90 ? " hot" : ""}`}>
-            <i style={{ width: `${fill}%` }} />
+            <i style={{ transform: `translateX(${fill - 100}%)` }} />
           </div>
           <small title={info.root}>{info.root}</small>
         </div>
@@ -191,7 +191,7 @@ function TitleBlock({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: busy ? 0.5 : 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.98 }}
-      transition={spring}
+      transition={SPRING.panel}
     >
       <div className="cache-title-head">
         <button className="thumb" disabled={!t.url} onClick={() => t.url && onOpen(t.url)} title="Открыть тайтл">
@@ -268,7 +268,7 @@ function FileRow({
       initial={{ opacity: 0 }}
       animate={{ opacity: busy ? 0.5 : 1 }}
       exit={{ opacity: 0, height: 0 }}
-      transition={spring}
+      transition={SPRING.panel}
     >
       <b>{epName(f.tag)}</b>
       {f.quality && <span className="q">{f.quality}</span>}
@@ -290,7 +290,7 @@ function FileRow({
       </button>
       {job && (
         <div className="track">
-          <i style={{ width: `${pct}%` }} />
+          <i style={{ transform: `translateX(${pct - 100}%)` }} />
         </div>
       )}
     </motion.div>

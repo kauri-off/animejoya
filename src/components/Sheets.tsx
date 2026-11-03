@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { SPRING } from "../motion";
 import type { Settings } from "../api";
-
-const spring = { type: "spring" as const, stiffness: 460, damping: 36 };
 
 // Поля сами не фокусируем, чтобы на телефоне не выезжала клавиатура; кому надо — ставит autoFocus.
 const focusSheet = (e: Event) => {
@@ -39,7 +38,7 @@ function Veil({
                 initial={{ opacity: 0, y: 22, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 12, scale: 0.97, transition: { duration: 0.15 } }}
-                transition={spring}
+                transition={SPRING.panel}
               >
                 <Dialog.Title>{title}</Dialog.Title>
                 <Dialog.Description className="sub">{sub}</Dialog.Description>

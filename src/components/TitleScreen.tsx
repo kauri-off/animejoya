@@ -1,11 +1,10 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { media, rank, type Episode, type Progress, type Title } from "../api";
+import { EASE, SPRING, reducedMotion, skipFadeIfCached } from "../motion";
 import { Check, CheckCheck, Download, Play, SkipBack, SkipForward, Trash2, X, Zap } from "lucide-react";
 
 const Watch = lazy(() => import("./Watch"));
-
-const spring = { type: "spring" as const, stiffness: 420, damping: 34 };
 
 // Сайт кладёт выбор в дерево data-id: озвучка → плеер → диапазон серий.
 // Уровней бывает два или три, поэтому имя берём по индексу, а не по типу.
@@ -135,7 +134,7 @@ export default function TitleScreen({
   }, [playerId]);
 
   useEffect(() => {
-    if (watching !== null) theater.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (watching !== null) theater.current?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
   }, [watching]);
 
   // Пока смотрим серию, следующая тихо ложится во временный кэш.
@@ -184,7 +183,7 @@ export default function TitleScreen({
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.28, ease: EASE }}
           >
             <Suspense fallback={<div className="player placeholder" />}>
               <Watch
@@ -240,7 +239,7 @@ export default function TitleScreen({
 
       <div className="hero">
         <div className="poster">
-          {entry.poster ? <img src={entry.poster} alt="" draggable={false} decoding="async" /> : null}
+          {entry.poster ? <img ref={skipFadeIfCached} src={entry.poster} alt="" draggable={false} decoding="async" /> : null}
         </div>
 
         <div>
@@ -252,7 +251,7 @@ export default function TitleScreen({
               <button
                 className="primary big"
                 disabled={pending}
-                onClick={() => (watching === upNext ? theater.current?.scrollIntoView({ behavior: "smooth" }) : watch(upNext))}
+                onClick={() => (watching === upNext ? theater.current?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth" }) : watch(upNext))}
               >
                 <Play size={14} fill="currentColor" strokeWidth={0} />
                 {finished ? "Пересмотреть" : lastSeen < 0 ? "Смотреть" : "Продолжить"}
@@ -361,7 +360,7 @@ export default function TitleScreen({
                     </span>
                   )}
                   {job && job.total > 0 && (
-                    <span className="bar" style={{ width: `${(job.done / job.total) * 100}%` }} />
+                    <span className="bar" style={{ transform: `translateX(${(job.done / job.total) * 100 - 100}%)` }} />
                   )}
                 </button>
               );
@@ -389,7 +388,7 @@ export default function TitleScreen({
             initial={{ opacity: 0, y: 26, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 26, scale: 0.96 }}
-            transition={spring}
+            transition={SPRING.panel}
           >
             <div className="head">
               <div className="label">

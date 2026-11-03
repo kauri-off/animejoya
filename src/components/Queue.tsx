@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { SPRING } from "../motion";
 import { Download, X } from "lucide-react";
 import { bytes, type Progress } from "../api";
 
@@ -43,10 +44,10 @@ export default function Queue({
         <motion.div
           className="dl"
           ref={box}
-          initial={{ opacity: 0, scale: 0.8 }}
+          initial={{ opacity: 0, scale: 0.94 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.8 }}
-          transition={{ type: "spring", stiffness: 480, damping: 32 }}
+          exit={{ opacity: 0, scale: 0.94 }}
+          transition={SPRING.pop}
         >
           <button className="dl-btn" title="Предзагрузка" onClick={() => setOpen((o) => !o)}>
             <svg className="ring" viewBox="0 0 32 32">
@@ -70,7 +71,7 @@ export default function Queue({
                 initial={{ opacity: 0, y: -6, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -6, scale: 0.97 }}
-                transition={{ type: "spring", stiffness: 500, damping: 36 }}
+                transition={SPRING.pop}
               >
                 {list.map((j) => {
                   const pct = j.total ? Math.min(100, (j.done / j.total) * 100) : 0;
@@ -84,7 +85,7 @@ export default function Queue({
                         </button>
                       </div>
                       <div className="track">
-                        <i style={{ width: `${pct}%` }} />
+                        <i style={{ transform: `translateX(${pct - 100}%)` }} />
                       </div>
                     </div>
                   );
