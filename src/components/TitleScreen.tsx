@@ -352,7 +352,7 @@ export default function TitleScreen({
                   onClick={() => setPick(i === pick ? null : i)}
                   onDoubleClick={() => watch(i)}
                 >
-                  {e.tag.replace(/^0/, "")}
+                  {e.label}
                   {e.file && <span className="dot" />}
                   {seen && (
                     <span className="seenmark">

@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import makeFetchCookie from "fetch-cookie";
 import type { AnyNode } from "domhandler";
 import { msg, type Fact, type Source } from "./schema.ts";
+import { episodeNumber, epTag } from "./store.ts";
 
 export const SIBNET = "https://video.sibnet.ru";
 export const UA = "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
@@ -208,10 +209,24 @@ export class Site {
 }
 
 export class Playlist {
+  private readonly ambiguousCacheTags = new Set<string>();
+
   constructor(
     readonly players: Player[],
     readonly episodes: Episode[],
-  ) {}
+  ) {
+    for (const ep of episodes) {
+      const prefix = /^[0-9]+/.exec(ep.title)?.[0];
+      if (prefix && episodeNumber(ep.title) === null && usable(ep) !== null) {
+        this.ambiguousCacheTags.add(epTag(prefix));
+      }
+    }
+  }
+
+  cacheTag(title: string): string {
+    const tag = epTag(title);
+    return this.ambiguousCacheTags.has(tag) ? `${tag}.episode` : tag;
+  }
 
   /// data-id иерархичен: `0_0` — озвучка, `0_0_1` — плеер внутри неё,
   /// а у долгих тайтлов есть ещё `0_0_1_3` — диапазон серий.

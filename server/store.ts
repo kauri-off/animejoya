@@ -103,10 +103,12 @@ export function slug(url: string): string {
   return (url.split("/").pop() ?? url).replace(/(\.html)+$/, "");
 }
 
-/// «21 серия» -> «21», иначе безопасное имя из заголовка.
+export const episodeNumber = (title: string): string | null =>
+  /^([0-9]+)(?:\s+серия)?$/iu.exec(title)?.[1] ?? null;
+
 export function epTag(title: string): string {
-  const num = /^[0-9]+/.exec(title);
-  if (num) return num[0].padStart(2, "0");
+  const num = episodeNumber(title);
+  if (num !== null) return num.padStart(2, "0");
   return Array.from(title)
     .map((c) => (/[\p{L}\p{N}]/u.test(c) ? c : "_"))
     .join("");

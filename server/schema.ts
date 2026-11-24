@@ -27,7 +27,7 @@ export const Entry = z.object({
 export type Entry = z.infer<typeof Entry>;
 
 export type Source = { quality: string; url: string; referer: string };
-export type Episode = { title: string; tag: string; sources: Source[]; file: string | null };
+export type Episode = { title: string; label: string; tag: string; sources: Source[]; file: string | null };
 export type Player = { id: string; path: string[]; episodes: Episode[]; resolvable: boolean };
 export type Title = { entry: Entry; players: Player[]; external: string[]; dir: string };
 

@@ -698,6 +698,7 @@ kbd {
 
 .ep {
   position: relative;
+  min-width: 0;
   height: 54px;
   border-radius: 12px;
   border: 1px solid var(--line);
@@ -708,6 +709,7 @@ kbd {
   font-weight: 560;
   color: #d8d5e6;
   overflow: hidden;
+  overflow-wrap: anywhere;
   transition: border-color 0.18s, color 0.18s, background 0.18s, transform 0.15s var(--ease);
 }
 .ep:hover {

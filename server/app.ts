@@ -99,8 +99,9 @@ async function refresh(url: string, add: boolean): Promise<Entry | null> {
   return upsert(url, parseMeta(fresh.html), totalOf(fresh.playlist));
 }
 
-function episodeView(e: RawEpisode, dir: string): Episode {
-  const tag = store.epTag(e.title);
+function episodeView(e: RawEpisode, dir: string, playlist: Playlist): Episode {
+  const tag = playlist.cacheTag(e.title);
+  const label = store.episodeNumber(e.title)?.replace(/^0+(?=\d)/, "") ?? e.title;
   let file: string | null = null;
   for (const s of e.sources) {
     const candidate = path.join(dir, `${tag}-${s.quality}.mp4`);
@@ -109,11 +110,13 @@ function episodeView(e: RawEpisode, dir: string): Episode {
       break;
     }
   }
-  return { title: e.title, tag, sources: e.sources, file };
+  return { title: e.title, label, tag, sources: e.sources, file };
 }
 
-const destPath = (pageUrl: string, epTitle: string, quality: string): string =>
-  path.join(cache.dirOf(store.slug(pageUrl)), `${store.epTag(epTitle)}-${quality}.mp4`);
+function destPath(pageUrl: string, epTitle: string, quality: string): string {
+  const tag = playlists.get(pageUrl)?.cacheTag(epTitle) ?? store.epTag(epTitle);
+  return path.join(cache.dirOf(store.slug(pageUrl)), `${tag}-${quality}.mp4`);
+}
 
 const dropped = (files: string[]): void => {
   const list = [...new Set(files.map((f) => f.replace(/\.part$/, "")))];
@@ -188,7 +191,7 @@ async function resolvePlayer(url: string, playerId: string): Promise<Episode[]> 
   const out = episodes.map((e, i) => {
     const r = resolved[i]!;
     if (r.status === "rejected") last = r.reason;
-    return episodeView(r.status === "fulfilled" ? { ...e, sources: r.value } : e, dir);
+    return episodeView(r.status === "fulfilled" ? { ...e, sources: r.value } : e, dir, playlist);
   });
 
   if (out.every((e) => e.sources.length === 0)) {
@@ -241,7 +244,7 @@ async function openTitle(url: string): Promise<Title> {
     id: c.id,
     path: c.path,
     resolvable: c.resolvable,
-    episodes: playlist.episodesOf(c.id).map((e) => episodeView(e, dir)),
+    episodes: playlist.episodesOf(c.id).map((e) => episodeView(e, dir, playlist)),
   }));
   return { entry, players, external: playlist.externalNames(), dir };
 }
